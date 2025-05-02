@@ -1,0 +1,190 @@
+import logging
+import os
+from dotenv import load_dotenv
+from datetime import datetime
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, ContextTypes
+)
+
+# Bot token'ı doğrudan koda ekliyoruz.
+TOKEN = "your_bot_token_here"
+
+katilanlar = []
+kadrolar = ([], [])
+istatistikler = {}
+mac_tarihi = None  # Admin tarafından belirlenecek
+MAX_KATILIM = 14
+
+logging.basicConfig(level=logging.INFO)
+
+# Komutlar listesi
+async def bilgi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "**⚽ Komutlar:**\n\n"
+        "/katil [isim] - Maça katıl (grup dışı için isim girilebilir)\n"
+        "/liste - Katılanları gör\n"
+        "/kadro - Otomatik kadro böl\n"
+        "/sifirla - Katılanları sıfırla (maç sonrası)\n"
+        "/istatistik - Kendi istatistiklerini gör\n"
+        "/girdistatistik @kullanıcı gol asist katılım - Elle istatistik gir\n"
+        "/puanla - Oyunculara puan ver (maç sonrası)\n"
+        "/setgun [gün] [saat] - Maç gününü ve saatini belirle (admin komutu)"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+# Admin komutu: Maç günü belirle
+async def setgun(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global mac_tarihi
+    # Grup yöneticiliğini kontrol et
+    user = update.effective_user
+    chat_member = await update.effective_chat.get_member(user.id)
+    if chat_member.status not in ["administrator", "creator"]:
+        await update.message.reply_text("Bu komutu yalnızca grup yöneticisi kullanabilir.")
+        return
+    
+    if len(context.args) != 2:
+        await update.message.reply_text("Lütfen doğru formatta gün girin: /setgun [gün] [saat]")
+        return
+    
+    # Gün ve saati parse et
+    try:
+        gun = context.args[0]
+        saat = context.args[1]
+        mac_tarihi = datetime.strptime(f"{gun} {saat}", "%d/%m %H:%M").date()
+        await update.message.reply_text(f"Maç günü başarıyla {mac_tarihi} olarak belirlendi.")
+    except ValueError:
+        await update.message.reply_text("Tarihi yanlış formatta girdiniz. Lütfen doğru formatta girin.")
+
+# Katılma komutu
+async def katil(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global katilanlar
+
+    user = update.effective_user
+    name = " ".join(context.args) if context.args else user.mention_html()
+
+    if name in katilanlar:
+        await update.message.reply_text("Zaten katıldın.")
+    elif len(katilanlar) >= MAX_KATILIM:
+        await update.message.reply_text("Katılım doldu.")
+    else:
+        katilanlar.append(name)
+        if user.username:
+            istatistikler.setdefault(user.username, {"gol": 0, "asist": 0, "katılım": 0, "puanlar": []})
+        await update.message.reply_text(f"{name} maça katıldı!")
+
+# Katılanları görme komutu
+async def liste(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if katilanlar:
+        katilanlar_text = "\n".join(katilanlar)
+        await update.message.reply_text(f"Katılanlar:\n{katilanlar_text}")
+    else:
+        await update.message.reply_text("Henüz kimse katılmadı.")
+
+# Kadro oluşturma komutu
+async def kadro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global kadrolar
+    if len(katilanlar) < 7:
+        await update.message.reply_text("En az 14 kişi olmalı, kadro oluşturulamıyor.")
+        return
+
+    # Kadro bölme mantığı
+    kadrolar = [katilanlar[i:i + 7] for i in range(0, len(katilanlar), 7)]
+    kadro_text = "\n\n".join([f"Kadro {i+1}: {', '.join(kadro)}" for i, kadro in enumerate(kadrolar)])
+    await update.message.reply_text(f"Kadrolar:\n{kadro_text}")
+
+# Maç sonrası katılımcıları sıfırlama komutu
+async def sifirla(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global katilanlar, kadrolar
+
+    if mac_tarihi and datetime.now().date() > mac_tarihi:
+        katilanlar = []
+        kadrolar = ([], [])
+        await update.message.reply_text("Maç günü geçti, katılım sıfırlandı.")
+    else:
+        await update.message.reply_text("Maç günü henüz gelmedi.")
+
+# İstatistik görme komutu
+async def istatistik(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.username not in istatistikler:
+        await update.message.reply_text("Henüz maç oynamadınız.")
+    else:
+        stats = istatistikler[user.username]
+        stat_text = (
+            f"Gol: {stats['gol']}\n"
+            f"Asist: {stats['asist']}\n"
+            f"Katılım: {stats['katılım']}\n"
+            f"Puanlar: {stats['puanlar']}"
+        )
+        await update.message.reply_text(stat_text)
+
+# İstatistik girme komutu
+async def girdistatistik(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if len(context.args) != 4:
+        await update.message.reply_text("Lütfen doğru formatta girin: /girdistatistik @kullanıcı gol asist katılım")
+        return
+
+    target_user = context.args[0][1:]  # @ işareti siliniyor
+    gol = int(context.args[1])
+    asist = int(context.args[2])
+    katilim = int(context.args[3])
+
+    if target_user not in istatistikler:
+        istatistikler[target_user] = {"gol": 0, "asist": 0, "katılım": 0, "puanlar": []}
+
+    istatistikler[target_user]["gol"] += gol
+    istatistikler[target_user]["asist"] += asist
+    istatistikler[target_user]["katılım"] += katilim
+
+    await update.message.reply_text(f"{target_user} için istatistikler başarıyla girildi!")
+
+# Puan verme komutu
+async def puanla(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if len(context.args) != 2:
+        await update.message.reply_text("Lütfen doğru formatta girin: /puanla @kullanıcı puan")
+        return
+
+    target_user = context.args[0][1:]  # @ işareti siliniyor
+    puan = int(context.args[1])
+
+    if target_user not in istatistikler:
+        await update.message.reply_text(f"{target_user} için istatistik bulunmuyor.")
+        return
+
+    istatistikler[target_user]["puanlar"].append(puan)
+    await update.message.reply_text(f"{target_user} için {puan} puan verildi!")
+
+# Main fonksiyonu
+async def main():
+    application = ApplicationBuilder().token(TOKEN).build()
+
+    application.add_handler(CommandHandler("bilgi", bilgi))
+    application.add_handler(CommandHandler("katil", katil))  # Türkçe karakterler düzeltildi
+    application.add_handler(CommandHandler("liste", liste))
+    application.add_handler(CommandHandler("kadro", kadro))
+    application.add_handler(CommandHandler("sifirla", sifirla))
+    application.add_handler(CommandHandler("istatistik", istatistik))
+    application.add_handler(CommandHandler("girdistatistik", girdistatistik))
+    application.add_handler(CommandHandler("puanla", puanla))
+    application.add_handler(CommandHandler("setgun", setgun))
+
+    await application.run_polling()
+
+if __name__ == "__main__":
+    # Bu satırı kaldırdık: asyncio.run(main())
+    application = ApplicationBuilder().token(TOKEN).build()
+    application.add_handler(CommandHandler("bilgi", bilgi))
+    application.add_handler(CommandHandler("katil", katil))  # Türkçe karakterler düzeltildi
+    application.add_handler(CommandHandler("liste", liste))
+    application.add_handler(CommandHandler("kadro", kadro))
+    application.add_handler(CommandHandler("sifirla", sifirla))
+    application.add_handler(CommandHandler("istatistik", istatistik))
+    application.add_handler(CommandHandler("girdistatistik", girdistatistik))
+    application.add_handler(CommandHandler("puanla", puanla))
+    application.add_handler(CommandHandler("setgun", setgun))
+
+    # Bu satırı doğrudan çalıştırıyoruz
+    application.run_polling()
