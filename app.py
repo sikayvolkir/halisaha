@@ -46,8 +46,9 @@ st.markdown("""
         margin-bottom: 10px;
         border-radius: 4px;
     }
-    /* Doğrudan Yeşil Saha Tasarımı - Alt Kutular Kaldırıldı */
-    .football-pitch {
+
+    /* Tamamen Saha İçi Yapısı (Doğrudan Çim Zemin Üzerinde) */
+    .pitch-container {
         background-color: #2e7d32;
         background-image: linear-gradient(to right, rgba(255,255,255,0.15) 50%, transparent 50%);
         background-size: 80px 100%;
@@ -56,7 +57,13 @@ st.markdown("""
         padding: 20px;
         margin: 15px 0;
         position: relative;
-        min-height: 320px;
+        min-height: 350px;
+        display: flex;
+        justify-content: space-between;
+    }
+    .pitch-half {
+        width: 48%;
+        z-index: 2;
     }
     .pitch-center-line {
         position: absolute;
@@ -65,30 +72,36 @@ st.markdown("""
         bottom: 0;
         width: 3px;
         background-color: rgba(255, 255, 255, 0.7);
+        z-index: 1;
     }
     .pitch-team-title-a {
-        color: #e6f0ff;
+        color: #ffffff;
         font-weight: bold;
-        text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
-        margin-bottom: 12px;
+        font-size: 1.2rem;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        margin-bottom: 15px;
     }
     .pitch-team-title-b {
-        color: #ffe6e6;
+        color: #ffffff;
         font-weight: bold;
-        text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
-        margin-bottom: 12px;
+        font-size: 1.2rem;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        margin-bottom: 15px;
+    }
+    .player-chip-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
     }
     .player-chip {
         background-color: #1f6feb;
         color: white;
         padding: 8px 14px;
-        margin: 4px;
         border-radius: 20px;
-        display: inline-block;
         font-size: 0.95rem;
         font-weight: 600;
-        box-shadow: 0 3px 6px rgba(0,0,0,0.4);
-        border: 1px solid rgba(255,255,255,0.4);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+        border: 1px solid rgba(255,255,255,0.5);
     }
     .player-chip-b {
         background-color: #da3633;
@@ -242,29 +255,30 @@ def main_dashboard():
                     st.info("Bu gruba zaten istek gönderdiniz veya zaten üyesiniz.")
 
 # ---------------------------------------------------------
-# Sahada Kadro Gösterme Bileşeni (Tamamen Yeşil Saha İçinde)
+# Sahada Kadro Gösterme Bileşeni (Görsel İşaretlemeye Tam Uygun)
 # ---------------------------------------------------------
 def render_pitch(team_a, team_b):
-    st.markdown("<div class='football-pitch'><div class='pitch-center-line'></div>", unsafe_allow_html=True)
-    col_a, col_b = st.columns(2)
+    chips_a = "".join([f"<span class='player-chip'>{p}</span>" for p in team_a]) if team_a else "<em style='color:rgba(255,255,255,0.7);'>Henüz oyuncu eklenmedi</em>"
+    chips_b = "".join([f"<span class='player-chip player-chip-b'>{p}</span>" for p in team_b]) if team_b else "<em style='color:rgba(255,255,255,0.7);'>Henüz oyuncu eklenmedi</em>"
     
-    with col_a:
-        st.markdown("<h4 class='pitch-team-title-a'>🔵 A Takımı</h4>", unsafe_allow_html=True)
-        if team_a:
-            for p in team_a:
-                st.markdown(f"<span class='player-chip'>{p}</span>", unsafe_allow_html=True)
-        else:
-            st.caption("Henüz oyuncu seçilmedi.")
-        
-    with col_b:
-        st.markdown("<h4 class='pitch-team-title-b'>🔴 B Takımı</h4>", unsafe_allow_html=True)
-        if team_b:
-            for p in team_b:
-                st.markdown(f"<span class='player-chip player-chip-b'>{p}</span>", unsafe_allow_html=True)
-        else:
-            st.caption("Henüz oyuncu seçilmedi.")
-        
-    st.markdown("</div>", unsafe_allow_html=True)
+    pitch_html = f"""
+    <div class="pitch-container">
+        <div class="pitch-center-line"></div>
+        <div class="pitch-half">
+            <div class="pitch-team-title-a">🔵 A Takımı</div>
+            <div class="player-chip-container">
+                {chips_a}
+            </div>
+        </div>
+        <div class="pitch-half">
+            <div class="pitch-team-title-b">🔴 B Takımı</div>
+            <div class="player-chip-container">
+                {chips_b}
+            </div>
+        </div>
+    </div>
+    """
+    st.markdown(pitch_html, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
 # Grup Detay Sayfası
