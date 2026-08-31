@@ -149,12 +149,14 @@ def get_profile_name(profile_data):
     return "Bilinmeyen Oyuncu"
 
 # ---------------------------------------------------------
-# Davet Linki Kontrolü
+# Davet & Derin Bağlantı (Deep Link) Kontrolü
 # ---------------------------------------------------------
 def handle_invite():
     query_params = st.query_params
     if "group_id" in query_params:
         target_group_id = query_params["group_id"]
+        target_match_id = query_params.get("match_id", None)
+        
         if st.session_state.user is not None:
             user_id = st.session_state.user.id
             member_check = supabase.table("group_members").select("*").eq("group_id", target_group_id).eq("user_id", user_id).execute()
@@ -167,7 +169,8 @@ def handle_invite():
                         "id": g["id"],
                         "name": g["name"],
                         "is_admin": member_check.data[0]["is_admin"],
-                        "is_left": member_check.data[0].get("is_left", False)
+                        "is_left": member_check.data[0].get("is_left", False),
+                        "target_match_id": target_match_id
                     }
                     st.query_params.clear()
                     st.rerun()
@@ -183,13 +186,13 @@ def handle_invite():
                 st.query_params.clear()
 
 # ---------------------------------------------------------
-# Kimlik Doğrulama Ekranı (Enter Tıklama Destekli Form)
+# Kimlik Doğrulama Ekranı
 # ---------------------------------------------------------
 def auth_screen():
     st.markdown("<h1 class='main-title'>⚽ HALISAHA TAKİP SİSTEMİ</h1>", unsafe_allow_html=True)
     
     if "group_id" in st.query_params:
-        st.info("👋 Bir gruba katılmak için davet edildiniz! Devam etmek için lütfen giriş yapın veya kayıt olun.")
+        st.info("👋 Bir gruba katılmak veya maçı görüntülemek için davet edildiniz! Lütfen giriş yapın veya kayıt olun.")
 
     tab1, tab2 = st.tabs(["Giriş Yap", "Kayıt Ol"])
     
@@ -236,7 +239,7 @@ def auth_screen():
                         st.error(f"Kayıt işlemi başarısız: {e}")
 
 # ---------------------------------------------------------
-# Ana Dashboard (İsme Tıklayıp Girme & 3 Nokta Menüsü)
+# Ana Dashboard
 # ---------------------------------------------------------
 def main_dashboard():
     st.markdown("<h1 class='main-title'>⚽ HALISAHA GRUPLARIM</h1>", unsafe_allow_html=True)
@@ -391,10 +394,30 @@ def group_detail():
         
         if upcoming_matches_data:
             match_options = {f"{m['match_date']} - {m['location']}": m for m in upcoming_matches_data}
-            selected_match_label = st.selectbox("Maç Seçin:", list(match_options.keys()), key="upcoming_select")
+            
+            # Direct link ile bir maça girilmişse onu varsayılan yap
+            target_m_id = group.get("target_match_id")
+            default_index = 0
+            match_keys = list(match_options.keys())
+            if target_m_id:
+                for i, (label, m_data) in enumerate(match_options.items()):
+                    if m_data["id"] == target_m_id:
+                        default_index = i
+                        break
+            
+            selected_match_label = st.selectbox("Maç Seçin:", match_keys, index=default_index, key="upcoming_select")
             selected_match = match_options[selected_match_label]
             m_id = selected_match["id"]
             
+            # --- BU MAÇIN DOĞRUDAN PAYLAŞIM LİNKİ ---
+            base_url = "https://halisaha-takip.streamlit.app"
+            direct_match_link = f"{base_url}/?group_id={group['id']}&match_id={m_id}"
+            with st.popover("🔗 Bu Maçın Linkini Paylaş"):
+                st.write("Bu bağlantıyı paylaşarak arkadaşlarınızın doğrudan bu maçın kadro planlamasına gelmesini sağlayabilirsiniz:")
+                st.code(direct_match_link, language="text")
+            st.divider()
+            # ----------------------------------------
+
             players_res = supabase.table("match_players").select("user_id, custom_name, profiles(full_name)").eq("match_id", m_id).execute()
             player_names = [get_player_display_name(p) for p in players_res.data]
             if not player_names:
@@ -552,7 +575,6 @@ def group_detail():
                 match_date = st.date_input("Maç Tarihi")
                 location = st.text_input("Halı Saha / Saha Adı", value="Merkez Halı Saha")
                 
-                # Sadece gruptan ayrılmamış (aktif) oyuncuları listele
                 members_data = supabase.table("group_members").select("user_id, profiles(full_name)").eq("group_id", group["id"]).eq("is_left", False).execute()
                 player_dict = {get_profile_name(m.get("profiles")): m["user_id"] for m in members_data.data}
                 
@@ -578,7 +600,7 @@ def group_detail():
                             st.error(f"Hata: {e}")
 
     # =========================================================
-    # ÖZEL SEKME: SADECE ADMİNE ÖZEL DIŞARIDAN OYUNCU EKLEME
+    # TAB 3: DIŞARIDAN OYUNCU EKLEME (ADMİN)
     # =========================================================
     if group["is_admin"] and tab_custom_player:
         with tab_custom_player:
@@ -621,9 +643,10 @@ def group_detail():
     # =========================================================
     with tab_members:
         st.subheader("🔗 Gruba Davet Linki")
-        invite_link = f"https://halisaha-takip.streamlit.app/?group_id={group['id']}"
+        base_url = "https://halisaha-takip.streamlit.app"
+        invite_link = f"{base_url}/?group_id={group['id']}"
         st.code(invite_link, language="text")
-        st.caption("Bu bağlantıyı paylaşarak arkadaşlarınızı doğrudan gruba katılması için davet edebilirsiniz.")
+        st.caption("Bu bağlantıyı paylaşarak arkadaşlarınızı gruba davet edebilirsiniz (Mevcut üyeler doğrudan gruba girer).")
         st.divider()
 
         st.subheader("👥 Grup Üyeleri")
@@ -672,120 +695,114 @@ def group_detail():
             players_in_match = supabase.table("match_players").select("user_id, custom_name, goals, assists, profiles(full_name)").eq("match_id", selected_match_id).execute()
             
             st.write("#### 📊 Maç Performansı & İstatistikler")
-            table_data = [{"Oyuncu": get_player_display_name(p), "Gol": p["goals"], "Asist": p["assists"]} for p in players_in_match.data]
+            table_data = [{"Oyuncu": get_player_display_name(p), "Gol": p.get("goals", 0), "Asist": p.get("assists", 0)} for p in players_in_match.data]
             st.table(table_data)
 
             st.write("---")
             st.subheader("💬 Geçmiş Maç Yorumları ve Medya Paylaşımı")
             
             if not is_left:
-                with st.form(key=f"comment_form_{selected_match_id}"):
-                    c_text = st.text_area("Maç hakkında yorum yazın...", height=80)
-                    uploaded_file = st.file_uploader("Fotoğraf veya Video Ekleyin", type=["jpg", "jpeg", "png", "mp4", "mov"])
-                    submit_comment = st.form_submit_button("Yayınla")
+                with st.form(key=f"comment_form_{selected_match_id}", clear_on_submit=True):
+                    comment_text = st.text_area("Yorumunuz / Maç Değerlendirmesi", placeholder="Maç hakkında duygu ve düşüncelerinizi yazın...")
+                    media_url = st.text_input("Medya / Görsel Bağlantısı (Opsiyonel)", placeholder="https://...")
+                    submit_comment = st.form_submit_button("💬 Yorum Yap (Enter)")
                     
                     if submit_comment:
-                        media_url = None
-                        media_type = None
-                        
-                        if uploaded_file is not None:
+                        if comment_text.strip():
                             try:
-                                file_ext = uploaded_file.name.split(".")[-1]
-                                file_name = f"{selected_match_id}_{user_id}_{random.randint(1000,9999)}.{file_ext}"
-                                supabase.storage.from_("match-media").upload(file_name, uploaded_file.getvalue())
-                                media_url = supabase.storage.from_("match-media").get_public_url(file_name)
-                                media_type = "video" if file_ext.lower() in ["mp4", "mov"] else "image"
-                            except Exception:
-                                st.warning("Medya yüklenemedi. Yorum medyasız ekleniyor.")
+                                supabase.table("match_comments").insert({
+                                    "match_id": selected_match_id,
+                                    "user_id": user_id,
+                                    "comment": comment_text.strip(),
+                                    "media_url": media_url.strip() if media_url else None
+                                }).execute()
+                                st.success("Yorumunuz eklendi!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Yorum eklenirken hata oluştu: {e}")
+                        else:
+                            st.warning("Lütfen bir yorum metni girin.")
 
-                        if c_text.strip() or media_url:
-                            supabase.table("match_comments").insert({
-                                "match_id": selected_match_id,
-                                "user_id": user_id,
-                                "comment": c_text,
-                                "media_url": media_url,
-                                "media_type": media_type
-                            }).execute()
-                            st.success("Yorum eklendi!")
-                            st.rerun()
-
-            comments_res = supabase.table("match_comments").select("*, profiles(full_name)").eq("match_id", selected_match_id).order("created_at", desc=True).execute()
+            st.write("---")
+            st.markdown("#### 💬 Yapılan Yorumlar")
+            
+            comments_res = supabase.table("match_comments") \
+                .select("id, comment, media_url, created_at, profiles(full_name)") \
+                .eq("match_id", selected_match_id) \
+                .order("created_at", desc=True) \
+                .execute()
+                
             if comments_res.data:
-                for comm in comments_res.data:
-                    c_id = comm["id"]
-                    c_author_id = comm["user_id"]
-                    c_author = get_profile_name(comm.get("profiles"))
+                for c in comments_res.data:
+                    author_name = get_profile_name(c.get("profiles"))
+                    st.markdown(f"""
+                    <div class="comment-card">
+                        <strong>👤 {author_name}</strong> <small style='color:#8b949e;'>({c.get('created_at', '')[:10]})</small><br>
+                        {c['comment']}
+                    </div>
+                    """, unsafe_allow_html=True)
                     
-                    is_my_comment = (c_author_id == user_id)
-                    can_delete = (is_my_comment or group["is_admin"]) and not is_left
-                    
-                    st.markdown(f"<div class='comment-card'><b>{c_author}</b> <small>({comm['created_at'][:16]})</small><br>{comm['comment']}</div>", unsafe_allow_html=True)
-                    
-                    if comm.get("media_url"):
-                        if comm["media_type"] == "image":
-                            st.image(comm["media_url"], width=300)
-                        elif comm["media_type"] == "video":
-                            st.video(comm["media_url"])
-                            
-                    if (can_delete or is_my_comment) and not is_left:
-                        btn_col1, btn_col2, _ = st.columns([1, 1, 6])
-                        if is_my_comment:
-                            if btn_col1.button("✏️ Düzenle", key=f"edit_btn_{c_id}"):
-                                st.session_state[f"editing_{c_id}"] = not st.session_state.get(f"editing_{c_id}", False)
-                                
-                        if can_delete:
-                            if btn_col2.button("🗑️ Sil", key=f"del_btn_{c_id}"):
-                                supabase.table("match_comments").delete().eq("id", c_id).execute()
-                                st.success("Yorum silindi!")
-                                st.rerun()
-
-                    if st.session_state.get(f"editing_{c_id}", False) and not is_left:
-                        with st.form(key=f"edit_form_{c_id}"):
-                            new_text = st.text_area("Yorumu Düzenle", value=comm["comment"])
-                            if st.form_submit_button("Güncelle"):
-                                supabase.table("match_comments").update({"comment": new_text}).eq("id", c_id).execute()
-                                st.session_state[f"editing_{c_id}"] = False
-                                st.success("Yorum güncellendi!")
-                                st.rerun()
-                    st.divider()
+                    if c.get("media_url"):
+                        st.image(c["media_url"], use_container_width=True)
+            else:
+                st.caption("Bu maç için henüz yorum yapılmamış.")
+        else:
+            st.info("Oynanmış geçmiş bir maç bulunmuyor.")
 
     # =========================================================
-    # TAB: PUAN SIRALAMASI
+    # TAB: PUAN SIRALAMASI & İSTATİSTİKLER
     # =========================================================
     with tab_leaderboard:
-        st.subheader("🏆 Genel İstatistikler ve Sıralama")
-        all_players = supabase.table("group_members").select("user_id, profiles(full_name)").eq("group_id", group["id"]).execute()
+        st.subheader("🏆 Grup Puan ve Performans Sıralaması")
         
-        leaderboard = []
-        for p in all_players.data:
-            p_id = p["user_id"]
-            p_name = get_profile_name(p.get("profiles"))
-            
-            stats = supabase.table("match_players").select("goals, assists").eq("user_id", p_id).execute()
-            tot_goals = sum([item["goals"] for item in stats.data]) if stats.data else 0
-            tot_assists = sum([item["assists"] for item in stats.data]) if stats.data else 0
-            
-            leaderboard.append({"Oyuncu": p_name, "Toplam Gol": tot_goals, "Toplam Asist": tot_assists})
-            
-        leaderboard = sorted(leaderboard, key=lambda x: (x["Toplam Gol"], x["Toplam Asist"]), reverse=True)
-        st.table(leaderboard)
+        past_match_ids = [m["id"] for m in matches_list if str(m["match_date"]) < today_str]
+        
+        if past_match_ids:
+            stats_res = supabase.table("match_players") \
+                .select("user_id, custom_name, goals, assists, profiles(full_name)") \
+                .in_("match_id", past_match_ids) \
+                .execute()
+                
+            if stats_res.data:
+                leaderboard = {}
+                for row in stats_res.data:
+                    name = get_player_display_name(row)
+                    goals = row.get("goals") or 0
+                    assists = row.get("assists") or 0
+                    
+                    if name not in leaderboard:
+                        leaderboard[name] = {"Maç": 0, "Gol": 0, "Asist": 0, "Toplam Skora Katkı": 0}
+                    
+                    leaderboard[name]["Maç"] += 1
+                    leaderboard[name]["Gol"] += goals
+                    leaderboard[name]["Asist"] += assists
+                    leaderboard[name]["Toplam Skora Katkı"] += (goals + assists)
+                
+                sorted_leaderboard = sorted(
+                    [{"Oyuncu": k, **v} for k, v in leaderboard.items()],
+                    key=lambda x: x["Toplam Skora Katkı"],
+                    reverse=True
+                )
+                
+                st.table(sorted_leaderboard)
+            else:
+                st.info("Henüz girilmiş maç istatistiği bulunmuyor.")
+        else:
+            st.info("İstatistik oluşturmak için henüz tamamlanmış bir maç yok.")
 
 # ---------------------------------------------------------
-# Ana Çalıştırma Mantığı
+# Ana Akış Yönlendirmesi (Main Loop)
 # ---------------------------------------------------------
-if st.session_state.user is None:
-    auth_screen()
-else:
-    handle_invite()
-    
-    st.sidebar.write(f"👤 **{st.session_state.user.email}**")
-    if st.sidebar.button("Çıkış Yap"):
-        supabase.auth.sign_out()
-        st.session_state.user = None
-        st.session_state.selected_group = None
-        st.rerun()
-
-    if st.session_state.selected_group is None:
-        main_dashboard()
+def main():
+    if st.session_state.user is None:
+        auth_screen()
     else:
-        group_detail()
+        handle_invite()
+        
+        if st.session_state.selected_group is None:
+            main_dashboard()
+        else:
+            group_detail()
+
+if __name__ == "__main__":
+    main()
