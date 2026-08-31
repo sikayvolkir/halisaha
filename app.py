@@ -46,16 +46,17 @@ st.markdown("""
         margin-bottom: 10px;
         border-radius: 4px;
     }
+    /* Yeşil Saha Tasarımı */
     .football-pitch {
         background-color: #2e7d32;
-        background-image: linear-gradient(to right, rgba(255,255,255,0.1) 50%, transparent 50%);
+        background-image: linear-gradient(to right, rgba(255,255,255,0.15) 50%, transparent 50%);
         background-size: 80px 100%;
         border: 4px solid #ffffff;
         border-radius: 12px;
-        padding: 20px;
+        padding: 15px;
         margin: 15px 0;
         position: relative;
-        min-height: 280px;
+        min-height: 320px;
     }
     .pitch-center-line {
         position: absolute;
@@ -65,22 +66,32 @@ st.markdown("""
         width: 3px;
         background-color: rgba(255, 255, 255, 0.7);
     }
-    .team-box {
-        background: rgba(0, 0, 0, 0.4);
-        border: 1px solid rgba(255, 255, 255, 0.3);
+    .team-box-a {
+        background: rgba(31, 111, 235, 0.25);
+        border: 2px solid #1f6feb;
         border-radius: 8px;
         padding: 10px;
         color: white;
+        min-height: 280px;
+    }
+    .team-box-b {
+        background: rgba(218, 54, 51, 0.25);
+        border: 2px solid #da3633;
+        border-radius: 8px;
+        padding: 10px;
+        color: white;
+        min-height: 280px;
     }
     .player-chip {
         background-color: #1f6feb;
         color: white;
-        padding: 4px 8px;
+        padding: 6px 12px;
         margin: 4px;
         border-radius: 15px;
         display: inline-block;
         font-size: 0.90rem;
-        font-weight: 500;
+        font-weight: 600;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
     }
     .player-chip-b {
         background-color: #da3633;
@@ -156,7 +167,7 @@ def auth_screen():
                 st.error(f"Kayıt işlemi başarısız: {e}")
 
 # ---------------------------------------------------------
-# Ana Dashboard & Grup İstek Yönetimi
+# Ana Dashboard
 # ---------------------------------------------------------
 def main_dashboard():
     st.markdown("<h1 class='main-title'>⚽ HALISAHA GRUPLARIM</h1>", unsafe_allow_html=True)
@@ -224,21 +235,30 @@ def main_dashboard():
                     st.info("Bu gruba zaten istek gönderdiniz veya zaten üyesiniz.")
 
 # ---------------------------------------------------------
-# Sahada Kadro Gösterme Bileşeni
+# Sahada Kadro Gösterme Bileşeni (Saha İçinde Listeleme)
 # ---------------------------------------------------------
 def render_pitch(team_a, team_b):
     st.markdown("<div class='football-pitch'><div class='pitch-center-line'></div>", unsafe_allow_html=True)
     col_a, col_b = st.columns(2)
+    
     with col_a:
-        st.markdown("<div class='team-box'><h4>🔵 A Takımı</h4>", unsafe_allow_html=True)
-        for p in team_a:
-            st.markdown(f"<span class='player-chip'>{p}</span>", unsafe_allow_html=True)
+        st.markdown("<div class='team-box-a'><h4>🔵 A Takımı</h4>", unsafe_allow_html=True)
+        if team_a:
+            for p in team_a:
+                st.markdown(f"<span class='player-chip'>{p}</span>", unsafe_allow_html=True)
+        else:
+            st.caption("Henüz oyuncu seçilmedi.")
         st.markdown("</div>", unsafe_allow_html=True)
+        
     with col_b:
-        st.markdown("<div class='team-box'><h4>🔴 B Takımı</h4>", unsafe_allow_html=True)
-        for p in team_b:
-            st.markdown(f"<span class='player-chip player-chip-b'>{p}</span>", unsafe_allow_html=True)
+        st.markdown("<div class='team-box-b'><h4>🔴 B Takımı</h4>", unsafe_allow_html=True)
+        if team_b:
+            for p in team_b:
+                st.markdown(f"<span class='player-chip player-chip-b'>{p}</span>", unsafe_allow_html=True)
+        else:
+            st.caption("Henüz oyuncu seçilmedi.")
         st.markdown("</div>", unsafe_allow_html=True)
+        
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------
@@ -361,13 +381,34 @@ def group_detail():
                     st.session_state.current_team_b = t_b
                     st.rerun()
 
-                st.markdown("#### ✍️ Manuel Kadro Düzenleme")
-                man_a = st.multiselect("🔵 A Takımı Oyuncuları", options=player_names, default=st.session_state.current_team_a, key="man_select_a")
-                man_b = [p for p in player_names if p not in man_a]
+                # --- YAN YANA MANUEL SEÇİM ALANI ---
+                st.markdown("#### ✍️ Yan Yana Manuel Kadro Seçimi")
+                man_col_a, man_col_b = st.columns(2)
                 
-                st.session_state.current_team_a = man_a
-                st.session_state.current_team_b = man_b
+                with man_col_a:
+                    selected_a = st.multiselect(
+                        "🔵 A Takımı Oyuncuları", 
+                        options=player_names, 
+                        default=[p for p in st.session_state.current_team_a if p in player_names],
+                        key="man_select_a_side"
+                    )
                 
+                # B takımı seçeneğinden A takımında seçilmiş olan oyuncuları düş
+                remaining_for_b = [p for p in player_names if p not in selected_a]
+                
+                with man_col_b:
+                    selected_b = st.multiselect(
+                        "🔴 B Takımı Oyuncuları", 
+                        options=remaining_for_b, 
+                        default=[p for p in st.session_state.current_team_b if p in remaining_for_b],
+                        key="man_select_b_side"
+                    )
+
+                st.session_state.current_team_a = selected_a
+                st.session_state.current_team_b = selected_b
+                
+                # SAHADA GÖSTER
+                st.markdown("#### 🏟️ Canlı Kadro Görünümü")
                 render_pitch(st.session_state.current_team_a, st.session_state.current_team_b)
 
                 st.write("---")
@@ -436,7 +477,6 @@ def group_detail():
                         st.success("Yorum eklendi!")
                         st.rerun()
 
-            # Yorumları Listeleme, Düzenleme & Silme
             comments_res = supabase.table("match_comments").select("*, profiles(full_name)").eq("match_id", m_id).order("created_at", desc=True).execute()
             if comments_res.data:
                 for comm in comments_res.data:
@@ -516,9 +556,15 @@ def group_detail():
             st.info("Sadece grup adminleri yeni maç oluşturabilir.")
 
     # =========================================================
-    # TAB 3: GRUP ÜYELERİ & KATILIM İSTEKLERİ
+    # TAB 3: GRUP ÜYELERİ & KATILIM İSTEKLERİ & DAVET LİNKİ
     # =========================================================
     with tab_members:
+        st.subheader("🔗 Gruba Davet Linki")
+        invite_link = f"https://halisaha-takip.streamlit.app/?group_id={group['id']}"
+        st.code(invite_link, language="text")
+        st.caption("Bu bağlantıyı paylaşarak arkadaşlarınızı doğrudan gruba katılması için davet edebilirsiniz.")
+        st.divider()
+
         st.subheader("👥 Grup Üyeleri")
         members = supabase.table("group_members").select("is_admin, profiles(full_name)").eq("group_id", group["id"]).execute()
         
@@ -528,7 +574,7 @@ def group_detail():
             st.write(f"- **{name}** ({role})")
             
         if group["is_admin"]:
-            st.write("---")
+            st.divider()
             st.subheader("🔔 Bekleyen Katılım İstekleri")
             requests = supabase.table("group_join_requests").select("id, user_id, profiles(full_name)").eq("group_id", group["id"]).eq("status", "pending").execute()
             
