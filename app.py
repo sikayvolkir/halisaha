@@ -46,7 +46,7 @@ st.markdown("""
         margin-bottom: 10px;
         border-radius: 4px;
     }
-    /* Yeşil Saha Tasarımı - Oyuncular Tamamen İçinde */
+    /* Doğrudan Yeşil Saha Tasarımı - Alt Kutular Kaldırıldı */
     .football-pitch {
         background-color: #2e7d32;
         background-image: linear-gradient(to right, rgba(255,255,255,0.15) 50%, transparent 50%);
@@ -56,7 +56,7 @@ st.markdown("""
         padding: 20px;
         margin: 15px 0;
         position: relative;
-        min-height: 350px;
+        min-height: 320px;
     }
     .pitch-center-line {
         position: absolute;
@@ -66,33 +66,29 @@ st.markdown("""
         width: 3px;
         background-color: rgba(255, 255, 255, 0.7);
     }
-    .team-box-a {
-        background: rgba(31, 111, 235, 0.35);
-        border: 2px dashed #1f6feb;
-        border-radius: 8px;
-        padding: 15px;
-        color: white;
-        min-height: 300px;
+    .pitch-team-title-a {
+        color: #e6f0ff;
+        font-weight: bold;
+        text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+        margin-bottom: 12px;
     }
-    .team-box-b {
-        background: rgba(218, 54, 51, 0.35);
-        border: 2px dashed #da3633;
-        border-radius: 8px;
-        padding: 15px;
-        color: white;
-        min-height: 300px;
+    .pitch-team-title-b {
+        color: #ffe6e6;
+        font-weight: bold;
+        text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+        margin-bottom: 12px;
     }
     .player-chip {
         background-color: #1f6feb;
         color: white;
         padding: 8px 14px;
-        margin: 5px;
+        margin: 4px;
         border-radius: 20px;
         display: inline-block;
         font-size: 0.95rem;
         font-weight: 600;
         box-shadow: 0 3px 6px rgba(0,0,0,0.4);
-        border: 1px solid rgba(255,255,255,0.3);
+        border: 1px solid rgba(255,255,255,0.4);
     }
     .player-chip-b {
         background-color: #da3633;
@@ -120,8 +116,6 @@ if "together_count" not in st.session_state:
     st.session_state.together_count = 1
 if "separate_count" not in st.session_state:
     st.session_state.separate_count = 1
-if "custom_name_input" not in st.session_state:
-    st.session_state.custom_name_input = ""
 
 def get_player_display_name(p_item):
     if p_item.get("custom_name"):
@@ -248,29 +242,27 @@ def main_dashboard():
                     st.info("Bu gruba zaten istek gönderdiniz veya zaten üyesiniz.")
 
 # ---------------------------------------------------------
-# Sahada Kadro Gösterme Bileşeni (Oyuncular Yeşil Alan İçinde)
+# Sahada Kadro Gösterme Bileşeni (Tamamen Yeşil Saha İçinde)
 # ---------------------------------------------------------
 def render_pitch(team_a, team_b):
     st.markdown("<div class='football-pitch'><div class='pitch-center-line'></div>", unsafe_allow_html=True)
     col_a, col_b = st.columns(2)
     
     with col_a:
-        st.markdown("<div class='team-box-a'><h4>🔵 A Takımı</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 class='pitch-team-title-a'>🔵 A Takımı</h4>", unsafe_allow_html=True)
         if team_a:
             for p in team_a:
                 st.markdown(f"<span class='player-chip'>{p}</span>", unsafe_allow_html=True)
         else:
             st.caption("Henüz oyuncu seçilmedi.")
-        st.markdown("</div>", unsafe_allow_html=True)
         
     with col_b:
-        st.markdown("<div class='team-box-b'><h4>🔴 B Takımı</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 class='pitch-team-title-b'>🔴 B Takımı</h4>", unsafe_allow_html=True)
         if team_b:
             for p in team_b:
                 st.markdown(f"<span class='player-chip player-chip-b'>{p}</span>", unsafe_allow_html=True)
         else:
             st.caption("Henüz oyuncu seçilmedi.")
-        st.markdown("</div>", unsafe_allow_html=True)
         
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -517,7 +509,6 @@ def group_detail():
                 m_opt = {f"{m['match_date']} - {m['location']}": m["id"] for m in upcoming_matches}
                 sel_m_id = st.selectbox("Oyuncu Eklenecek Maçı Seçin:", list(m_opt.keys()), key="custom_p_match_select")
                 
-                # ENTER İLE EKLEME VE İSİM SİLME FORMU
                 with st.form(key="add_custom_player_form", clear_on_submit=True):
                     custom_name_val = st.text_input("Dışarıdan Gelecek Oyuncunun Adı Soyadı:", placeholder="İsim yazın ve Enter'a basın...")
                     submit_custom_p = st.form_submit_button("➕ Oyuncuyu Kadroya Dahil Et (Enter)")
@@ -533,7 +524,6 @@ def group_detail():
                         else:
                             st.warning("Lütfen bir isim girin.")
 
-                # MEVCUT MAÇTAKİ OYUNCULARIN LİSTESİ
                 st.write("---")
                 st.subheader("📋 Bu Maçın Mevcut Kadrosu")
                 curr_players = supabase.table("match_players").select("user_id, custom_name, profiles(full_name)").eq("match_id", m_opt[sel_m_id]).execute()
