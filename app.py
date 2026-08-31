@@ -144,24 +144,19 @@ def get_profile_name(profile_data):
     return "Bilinmeyen Oyuncu"
 
 # ---------------------------------------------------------
-# SADECE GRUP DAVET KONTROLÜ
+# GRUP DAVET KONTROLÜ
 # ---------------------------------------------------------
 def handle_group_invite():
-    # 1. URL'den group_id parametresini yakala ve sakla
     if "group_id" in st.query_params:
         st.session_state.pending_group_id = st.query_params["group_id"]
-        st.query_params.clear()
 
-    # 2. Eğer kullanıcı giriş yapmışsa ve elinde grup daveti varsa işle
     if st.session_state.user is not None and st.session_state.pending_group_id is not None:
         target_group_id = st.session_state.pending_group_id
         user_id = st.session_state.user.id
         
-        # Kullanıcı zaten grup üyesi mi?
         member_check = supabase.table("group_members").select("*").eq("group_id", target_group_id).eq("user_id", user_id).execute()
         
         if member_check.data:
-            # Zaten üye -> Doğrudan o gruba gir
             group_data = supabase.table("groups").select("id, name").eq("id", target_group_id).execute()
             if group_data.data:
                 g = group_data.data[0]
@@ -172,9 +167,9 @@ def handle_group_invite():
                     "is_left": member_check.data[0].get("is_left", False)
                 }
                 st.session_state.pending_group_id = None
+                st.query_params.clear()
                 st.rerun()
         else:
-            # Üye değil -> Katılım isteği at
             try:
                 supabase.table("group_join_requests").insert({
                     "group_id": target_group_id,
@@ -184,13 +179,17 @@ def handle_group_invite():
             except Exception:
                 pass
             st.session_state.pending_group_id = None
+            st.query_params.clear()
 
 # ---------------------------------------------------------
-# Kimlik Doğrulama Ekranı (Doğrudan Karşılama)
+# Kimlik Doğrulama Ekranı
 # ---------------------------------------------------------
 def auth_screen():
     st.markdown("<h1 class='main-title'>⚽ HALISAHA TAKİP SİSTEMİ</h1>", unsafe_allow_html=True)
     
+    if "group_id" in st.query_params:
+        st.session_state.pending_group_id = st.query_params["group_id"]
+
     if st.session_state.pending_group_id is not None:
         st.info("👋 Bir gruba katılmak için davet edildiniz! Lütfen kendi hesabınızla giriş yapın veya yeni bir hesap oluşturun.")
 
@@ -245,7 +244,6 @@ def main_dashboard():
     st.markdown("<h1 class='main-title'>⚽ HALISAHA GRUPLARIM</h1>", unsafe_allow_html=True)
     user_id = st.session_state.user.id
     
-    # Çıkış Butonu
     if st.button("🚪 Oturumu Kapat"):
         supabase.auth.sign_out()
         st.session_state.user = None
@@ -286,10 +284,11 @@ def main_dashboard():
                                 supabase.table("group_members").update({"is_left": True}).eq("group_id", group["id"]).eq("user_id", user_id).execute()
                                 st.success("Gruptan çıkıldı.")
                                 st.rerun()
-                        if st.button("🗑️ Grubu Sil", key=f"del_{group['id']}"):
-                            supabase.table("group_members").delete().eq("group_id", group["id"]).eq("user_id", user_id).execute()
-                            st.success("Grup silindi.")
-                            st.rerun()
+                        if is_admin:
+                            if st.button("🗑️ Grubu Sil", key=f"del_{group['id']}"):
+                                supabase.table("groups").delete().eq("id", group["id"]).execute()
+                                st.success("Grup silindi.")
+                                st.rerun()
                 st.divider()
         else:
             st.info("Henüz herhangi bir gruba dahil değilsiniz.")
@@ -451,7 +450,8 @@ def group_detail():
                             c1, c2 = st.columns(2)
                             p1 = c1.selectbox(f"Birlikte #{i+1} Oyuncu A", player_names, key=f"tog_a_{i}")
                             p2 = c2.selectbox(f"Birlikte #{i+1} Oyuncu B", player_names, key=f"tog_b_{i}")
-                            together_pairs.append([p1, p2])
+                            if p1 != p2:
+                                together_pairs.append([p1, p2])
                         if st.button("➕ Yeni Beraber Oynayacak İkili Ekle"):
                             st.session_state.together_count += 1
                             st.rerun()
@@ -463,7 +463,8 @@ def group_detail():
                             c1, c2 = st.columns(2)
                             p1 = c1.selectbox(f"Ayrı #{i+1} Oyuncu A", player_names, key=f"sep_a_{i}")
                             p2 = c2.selectbox(f"Ayrı #{i+1} Oyuncu B", player_names, key=f"sep_b_{i}")
-                            separate_pairs.append([p1, p2])
+                            if p1 != p2:
+                                separate_pairs.append([p1, p2])
                         if st.button("➕ Yeni Ayrı Oynayacak İkili Ekle"):
                             st.session_state.separate_count += 1
                             st.rerun()
@@ -480,11 +481,19 @@ def group_detail():
                         half = len(plist) // 2
                         t_a, t_b = plist[:half], plist[half:]
                         
+                        # Beraber oynaması gerekenleri düzenle (Takım dengesini bozmadan Takas Yap)
                         for p1, p2 in together_pairs:
                             if p1 in t_a and p2 in t_b:
-                                t_b.remove(p2); t_a.append(p2)
+                                # t_a'dan p2 dışındaki başka birini t_b'ye kaydır, p2'yi t_a'ya al
+                                swap_candidate = [x for x in t_a if x != p1][0] if len(t_a) > 1 else None
+                                if swap_candidate:
+                                    t_a.remove(swap_candidate); t_b.append(swap_candidate)
+                                    t_b.remove(p2); t_a.append(p2)
                             elif p1 in t_b and p2 in t_a:
-                                t_a.remove(p2); t_b.append(p2)
+                                swap_candidate = [x for x in t_b if x != p1][0] if len(t_b) > 1 else None
+                                if swap_candidate:
+                                    t_b.remove(swap_candidate); t_a.append(swap_candidate)
+                                    t_a.remove(p2); t_b.append(p2)
                         
                         st.session_state.current_team_a = t_a
                         st.session_state.current_team_b = t_b
@@ -511,11 +520,8 @@ def group_detail():
                             key=f"man_select_b_side_{m_id}"
                         )
 
-                    st.session_state.current_team_a = selected_a
-                    st.session_state.current_team_b = selected_b
-                    
                     st.markdown("#### 🏟️ Canlı Kadro Görünümü")
-                    render_pitch(st.session_state.current_team_a, st.session_state.current_team_b)
+                    render_pitch(selected_a, selected_b)
 
                     st.write("---")
                     save_col, send_col = st.columns(2)
@@ -525,8 +531,8 @@ def group_detail():
                             data = {
                                 "match_id": m_id,
                                 "user_id": user_id,
-                                "team_a": st.session_state.current_team_a,
-                                "team_b": st.session_state.current_team_b,
+                                "team_a": selected_a,
+                                "team_b": selected_b,
                                 "together_pairs": together_pairs,
                                 "separate_pairs": separate_pairs
                             }
@@ -539,8 +545,8 @@ def group_detail():
                             data = {
                                 "match_id": m_id,
                                 "user_id": user_id,
-                                "team_a": st.session_state.current_team_a,
-                                "team_b": st.session_state.current_team_b,
+                                "team_a": selected_a,
+                                "team_b": selected_b,
                                 "together_pairs": together_pairs,
                                 "separate_pairs": separate_pairs,
                                 "is_approved": True if group["is_admin"] else False
@@ -671,6 +677,8 @@ def group_detail():
             st.write("#### 📊 Maç Performansı & İstatistikler")
             table_data = [{"Oyuncu": get_player_display_name(p), "Gol": p.get("goals", 0), "Asist": p.get("assists", 0)} for p in players_in_match.data]
             st.table(table_data)
+        else:
+            st.info("Henüz oynanmış geçmiş bir maç bulunmuyor.")
 
     # =========================================================
     # TAB: PUAN SIRALAMASI
@@ -687,29 +695,33 @@ def group_detail():
                     name = get_player_display_name(row)
                     goals = row.get("goals") or 0
                     assists = row.get("assists") or 0
+                    
                     if name not in leaderboard:
-                        leaderboard[name] = {"Maç": 0, "Gol": 0, "Asist": 0, "Toplam Skora Katkı": 0}
-                    leaderboard[name]["Maç"] += 1
-                    leaderboard[name]["Gol"] += goals
-                    leaderboard[name]["Asist"] += assists
-                    leaderboard[name]["Toplam Skora Katkı"] += (goals + assists)
+                        leaderboard[name] = {"Maç Sayısı": 0, "Toplam Gol": 0, "Toplam Asist": 0, "Toplam Skoru (Skor Katkısı)": 0}
+                    
+                    leaderboard[name]["Maç Sayısı"] += 1
+                    leaderboard[name]["Toplam Gol"] += goals
+                    leaderboard[name]["Toplam Asist"] += assists
+                    leaderboard[name]["Toplam Skoru (Skor Katkısı)"] += (goals + assists)
+
+                # Dict yapısını listeye çevirip puana göre sıralama
+                lb_list = [{"Oyuncu": k, **v} for k, v in leaderboard.items()]
+                lb_list = sorted(lb_list, key=lambda x: x["Toplam Skoru (Skor Katkısı)"], reverse=True)
                 
-                sorted_leaderboard = sorted([{"Oyuncu": k, **v} for k, v in leaderboard.items()], key=lambda x: x["Toplam Skora Katkı"], reverse=True)
-                st.table(sorted_leaderboard)
-
-# ---------------------------------------------------------
-# Ana Çalıştırma Bloğu
-# ---------------------------------------------------------
-def main():
-    handle_group_invite()
-    
-    if st.session_state.user is None:
-        auth_screen()
-    else:
-        if st.session_state.selected_group is None:
-            main_dashboard()
+                st.table(lb_list)
+            else:
+                st.info("İstatistik bulunamadı.")
         else:
-            group_detail()
+            st.info("Henüz istatistiki veri oluşturacak geçmiş bir maç oynanmadı.")
 
-if __name__ == "__main__":
-    main()
+# ---------------------------------------------------------
+# Uygulama Yönlendirme (Routing)
+# ---------------------------------------------------------
+if st.session_state.user is None:
+    auth_screen()
+else:
+    handle_group_invite()
+    if st.session_state.selected_group is None:
+        main_dashboard()
+    else:
+        group_detail()
