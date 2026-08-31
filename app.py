@@ -1,7 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
 import random
-import json
 from datetime import date
 
 # ---------------------------------------------------------
@@ -234,17 +233,21 @@ def group_detail():
         ["📅 Gelecek Maçlar & Kadrolar", "➕ Maç Planla", "📜 Geçmiş Maçlar", "🏆 Puan Sıralaması"]
     )
     
+    today_str = str(date.today())
+    
+    # Tüm Maçları Çek ve Python Tarafında Filtrele (Tarih Hatalarını Önler)
+    all_matches = supabase.table("matches").select("*").eq("group_id", group["id"]).execute()
+    matches_list = all_matches.data if all_matches.data else []
+
     # =========================================================
     # TAB 1: GELECEK MAÇLAR VE KADRO KURMA
     # =========================================================
     with tab_upcoming:
         st.subheader("📅 Gelecek Maçlar ve Kadro Planlaması")
-        today_str = str(date.today())
+        upcoming_matches_data = [m for m in matches_list if str(m["match_date"]) >= today_str]
         
-        upcoming_matches = supabase.table("matches").select("*").eq("group_id", group["id"]).gte("match_date", today_str).order("match_date", asc=True).execute()
-        
-        if upcoming_matches.data:
-            match_options = {f"{m['match_date']} - {m['location']}": m for m in upcoming_matches.data}
+        if upcoming_matches_data:
+            match_options = {f"{m['match_date']} - {m['location']}": m for m in upcoming_matches_data}
             selected_match_label = st.selectbox("Maç Seçin:", list(match_options.keys()), key="upcoming_select")
             selected_match = match_options[selected_match_label]
             m_id = selected_match["id"]
@@ -253,6 +256,9 @@ def group_detail():
             players_res = supabase.table("match_players").select("user_id, profiles(full_name)").eq("match_id", m_id).execute()
             player_names = [get_profile_name(p.get("profiles")) for p in players_res.data]
             
+            if not player_names:
+                player_names = ["Oyuncu Bulunamadı"]
+
             # Onaylanmış Kadro Var Mı?
             approved_draft = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).eq("is_approved", True).execute()
             
@@ -291,7 +297,6 @@ def group_detail():
                 st.markdown("#### 1️⃣ Oyuncu İlişki Şartları")
                 col_to, col_sep = st.columns(2)
                 
-                # Form State Yükleme
                 init_tog = saved_draft.get("together_pairs", []) if saved_draft else []
                 init_sep = saved_draft.get("separate_pairs", []) if saved_draft else []
                 
@@ -326,7 +331,6 @@ def group_detail():
                 st.markdown("#### 2️⃣ Kadro Oluşturma Yöntemi")
                 btn_col1, btn_col2 = st.columns(2)
                 
-                # --- RASTGELE KADRO KURMA ---
                 with btn_col1:
                     if st.button("🎲 Şartlara Göre Rastgele Kadro Kur"):
                         plist = player_names.copy()
@@ -334,7 +338,6 @@ def group_detail():
                         half = len(plist) // 2
                         t_a, t_b = plist[:half], plist[half:]
                         
-                        # Basit şart kontrolü ve düzeltme denemesi
                         for p1, p2 in together_pairs:
                             if p1 in t_a and p2 in t_b:
                                 t_b.remove(p2); t_a.append(p2)
@@ -345,7 +348,6 @@ def group_detail():
                         st.session_state.current_team_b = t_b
                         st.rerun()
 
-                # --- MANUEL KADRO KURMA ---
                 st.markdown("#### ✍️ Manuel Kadro Düzenleme")
                 man_a = st.multiselect("🔵 A Takımı Oyuncuları", options=player_names, default=st.session_state.current_team_a, key="man_select_a")
                 man_b = [p for p in player_names if p not in man_a]
@@ -356,7 +358,6 @@ def group_detail():
                 st.markdown("#### ⚽ Canlı Önizleme (Futbol Sahası)")
                 render_pitch(st.session_state.current_team_a, st.session_state.current_team_b)
 
-                # --- KAYDET VE GÖNDER BUTONLARI ---
                 st.write("---")
                 save_col, send_col = st.columns(2)
                 
@@ -435,10 +436,10 @@ def group_detail():
     # =========================================================
     with tab_past:
         st.subheader("Oynanmış Grup Maçları")
-        matches = supabase.table("matches").select("*").eq("group_id", group["id"]).lt("match_date", today_str).order("match_date", desc=True).execute()
+        past_matches_data = [m for m in matches_list if str(m["match_date"]) < today_str]
         
-        if matches.data:
-            match_options = {f"{m['match_date']} - {m['location']}": m["id"] for m in matches.data}
+        if past_matches_data:
+            match_options = {f"{m['match_date']} - {m['location']}": m["id"] for m in past_matches_data}
             selected_match_label = st.selectbox("Bir Geçmiş Maç Seçin:", list(match_options.keys()))
             selected_match_id = match_options[selected_match_label]
             
@@ -448,7 +449,6 @@ def group_detail():
             table_data = [{"Oyuncu": get_profile_name(p.get("profiles")), "Gol": p["goals"], "Asist": p["assists"]} for p in players_in_match.data]
             st.table(table_data)
 
-            # Gol / Asist Güncelleme
             st.write("---")
             user_in_match = [p for p in players_in_match.data if p["user_id"] == user_id]
             if user_in_match:
