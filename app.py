@@ -254,7 +254,6 @@ def group_detail():
         
     st.markdown(f"<h1 class='main-title'>⚽ {group['name']}</h1>", unsafe_allow_html=True)
     
-    # 5 Sekmeli Yapı
     tab_upcoming, tab_create, tab_members, tab_past, tab_leaderboard = st.tabs(
         ["📅 Gelecek Maçlar & Kadrolar", "➕ Maç Planla", "👥 Grup Üyeleri & İstekler", "📜 Geçmiş Maçlar", "🏆 Puan Sıralaması"]
     )
@@ -276,13 +275,11 @@ def group_detail():
             selected_match = match_options[selected_match_label]
             m_id = selected_match["id"]
             
-            # Maç Oyuncuları
             players_res = supabase.table("match_players").select("user_id, profiles(full_name)").eq("match_id", m_id).execute()
             player_names = [get_profile_name(p.get("profiles")) for p in players_res.data]
             if not player_names:
                 player_names = ["Oyuncu Bulunamadı"]
 
-            # Onaylanmış Kadro Kontrolü
             approved_draft = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).eq("is_approved", True).execute()
             
             if approved_draft.data:
@@ -295,7 +292,6 @@ def group_detail():
                 user_draft_res = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).eq("user_id", user_id).execute()
                 saved_draft = user_draft_res.data[0] if user_draft_res.data else None
                 
-                # Admin Onay Paneli
                 if group["is_admin"]:
                     with st.expander("👑 Admin Özel: Gelen Kadro Önerilerini İncele & Onayla"):
                         all_drafts = supabase.table("match_squad_drafts").select("*, profiles(full_name)").eq("match_id", m_id).execute()
@@ -343,7 +339,6 @@ def group_detail():
                         st.session_state.separate_count += 1
                         st.rerun()
 
-                # State Yönetimi
                 if "current_team_a" not in st.session_state:
                     st.session_state.current_team_a = saved_draft["team_a"] if saved_draft else player_names[:len(player_names)//2]
                 if "current_team_b" not in st.session_state:
@@ -379,7 +374,7 @@ def group_detail():
                 save_col, send_col = st.columns(2)
                 
                 with save_col:
-                    if st.button("💾 Taslağı Kaydet (Çıkıp Sonra Devam Et)", use_container_width=True):
+                    if st.button("💾 Taslağı Kaydet", use_container_width=True):
                         data = {
                             "match_id": m_id,
                             "user_id": user_id,
@@ -404,16 +399,15 @@ def group_detail():
                             "is_approved": True if group["is_admin"] else False
                         }
                         supabase.table("match_squad_drafts").upsert(data, on_conflict="match_id, user_id").execute()
-                        st.success("İşlem tamamlandı!")
+                        st.success("İşlem başarılı!")
                         st.rerun()
 
             # --- MAÇ YORUMLARI VE MEDYA ALANI ---
             st.write("---")
             st.subheader("💬 Maç Yorumları ve Medya Paylaşımı")
             
-            # Yorum Ekleme Formu
             with st.form(key=f"comment_form_{m_id}"):
-                c_text = st.text_area("Maç hakkında yorumunuzu yazın...", height=80)
+                c_text = st.text_area("Maç hakkında yorum yazın...", height=80)
                 uploaded_file = st.file_uploader("Fotoğraf veya Video Ekleyin", type=["jpg", "jpeg", "png", "mp4", "mov"])
                 submit_comment = st.form_submit_button("Yayınla")
                 
@@ -429,7 +423,7 @@ def group_detail():
                             media_url = supabase.storage.from_("match-media").get_public_url(file_name)
                             media_type = "video" if file_ext.lower() in ["mp4", "mov"] else "image"
                         except Exception as e:
-                            st.warning("Medya yüklenirken bir hata oluştu (Storage ayarlarını kontrol edin). Yorum medyasız gönderiliyor.")
+                            st.warning("Medya yüklenemedi. Yorum medyasız ekleniyor.")
 
                     if c_text.strip() or media_url:
                         supabase.table("match_comments").insert({
@@ -442,19 +436,48 @@ def group_detail():
                         st.success("Yorum eklendi!")
                         st.rerun()
 
-            # Yorumları Listeleme
+            # Yorumları Listeleme, Düzenleme & Silme
             comments_res = supabase.table("match_comments").select("*, profiles(full_name)").eq("match_id", m_id).order("created_at", desc=True).execute()
             if comments_res.data:
                 for comm in comments_res.data:
+                    c_id = comm["id"]
+                    c_author_id = comm["user_id"]
                     c_author = get_profile_name(comm.get("profiles"))
+                    
+                    is_my_comment = (c_author_id == user_id)
+                    can_delete = is_my_comment or group["is_admin"]
+                    
                     st.markdown(f"<div class='comment-card'><b>{c_author}</b> <small>({comm['created_at'][:16]})</small><br>{comm['comment']}</div>", unsafe_allow_html=True)
+                    
                     if comm.get("media_url"):
                         if comm["media_type"] == "image":
                             st.image(comm["media_url"], width=300)
                         elif comm["media_type"] == "video":
                             st.video(comm["media_url"])
+                            
+                    if can_delete or is_my_comment:
+                        btn_col1, btn_col2, _ = st.columns([1, 1, 6])
+                        if is_my_comment:
+                            if btn_col1.button("✏️ Düzenle", key=f"edit_btn_{c_id}"):
+                                st.session_state[f"editing_{c_id}"] = not st.session_state.get(f"editing_{c_id}", False)
+                                
+                        if can_delete:
+                            if btn_col2.button("🗑️ Sil", key=f"del_btn_{c_id}"):
+                                supabase.table("match_comments").delete().eq("id", c_id).execute()
+                                st.success("Yorum silindi!")
+                                st.rerun()
+
+                    if st.session_state.get(f"editing_{c_id}", False):
+                        with st.form(key=f"edit_form_{c_id}"):
+                            new_text = st.text_area("Yorumu Düzenle", value=comm["comment"])
+                            if st.form_submit_button("Güncelle"):
+                                supabase.table("match_comments").update({"comment": new_text}).eq("id", c_id).execute()
+                                st.session_state[f"editing_{c_id}"] = False
+                                st.success("Yorum güncellendi!")
+                                st.rerun()
+                    st.divider()
             else:
-                st.caption("Henüz yorum yapılmadı. İlk yorumu siz yapın!")
+                st.caption("Henüz yorum yapılmadı.")
         else:
             st.info("Planlanmış gelecek bir maç bulunmuyor.")
 
@@ -516,9 +539,7 @@ def group_detail():
                     col_req_1.write(f"**{u_name}** gruba katılmak istiyor.")
                     
                     if col_req_2.button("✅ Onayla", key=f"acc_{req['id']}"):
-                        # Gruba Üye Olarak Ekle
                         supabase.table("group_members").insert({"group_id": group["id"], "user_id": req["user_id"], "is_admin": False}).execute()
-                        # İsteği Güncelle
                         supabase.table("group_join_requests").update({"status": "approved"}).eq("id", req["id"]).execute()
                         st.success(f"{u_name} gruba eklendi!")
                         st.rerun()
