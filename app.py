@@ -284,9 +284,26 @@ def group_detail():
         
     st.markdown(f"<h1 class='main-title'>⚽ {group['name']}</h1>", unsafe_allow_html=True)
     
-    tab_upcoming, tab_create, tab_members, tab_past, tab_leaderboard = st.tabs(
-        ["📅 Gelecek Maçlar & Kadrolar", "➕ Maç Planla", "👥 Grup Üyeleri & İstekler", "📜 Geçmiş Maçlar", "🏆 Puan Sıralaması"]
-    )
+    # DİNAMİK SEKME YAPISI: Adminse harici oyuncu sekmesini göster
+    tabs_list = ["📅 Gelecek Maçlar & Kadrolar", "➕ Maç Planla"]
+    if group["is_admin"]:
+        tabs_list.append("➕ Dışarıdan Oyuncu Ekle (Admin)")
+    tabs_list.extend(["👥 Grup Üyeleri & İstekler", "📜 Geçmiş Maçlar", "🏆 Puan Sıralaması"])
+
+    tabs = st.tabs(tabs_list)
+    
+    tab_upcoming = tabs[0]
+    tab_create = tabs[1]
+    
+    idx = 2
+    tab_custom_player = None
+    if group["is_admin"]:
+        tab_custom_player = tabs[idx]
+        idx += 1
+        
+    tab_members = tabs[idx]
+    tab_past = tabs[idx+1]
+    tab_leaderboard = tabs[idx+2]
     
     today_str = str(date.today())
     all_matches = supabase.table("matches").select("*").eq("group_id", group["id"]).execute()
@@ -305,7 +322,7 @@ def group_detail():
             selected_match = match_options[selected_match_label]
             m_id = selected_match["id"]
             
-            # Kayıtlı & Kayıtsız (Custom) oyuncuların tamamını al
+            # Kayıtlı & Kayıtsız oyuncuların tümünü getir
             players_res = supabase.table("match_players").select("user_id, custom_name, profiles(full_name)").eq("match_id", m_id).execute()
             player_names = [get_player_display_name(p) for p in players_res.data]
             if not player_names:
@@ -342,7 +359,6 @@ def group_detail():
 
                 st.markdown("### 🛠️ Kendi Kadro Taslağını Kur")
                 
-                # --- DİNAMİK BİRLİKTE / AYRI SEÇİM ALANI ---
                 st.markdown("#### 1️⃣ Oyuncu İlişki Şartları")
                 col_to, col_sep = st.columns(2)
                 
@@ -392,7 +408,6 @@ def group_detail():
                     st.session_state.current_team_b = t_b
                     st.rerun()
 
-                # --- YAN YANA MANUEL SEÇİM ALANI ---
                 st.markdown("#### ✍️ Yan Yana Manuel Kadro Seçimi")
                 man_col_a, man_col_b = st.columns(2)
                 
@@ -417,7 +432,6 @@ def group_detail():
                 st.session_state.current_team_a = selected_a
                 st.session_state.current_team_b = selected_b
                 
-                # SAHADA GÖSTER
                 st.markdown("#### 🏟️ Canlı Kadro Görünümü")
                 render_pitch(st.session_state.current_team_a, st.session_state.current_team_b)
 
@@ -452,91 +466,15 @@ def group_detail():
                         supabase.table("match_squad_drafts").upsert(data, on_conflict="match_id, user_id").execute()
                         st.success("İşlem başarılı!")
                         st.rerun()
-
-            # --- MAÇ YORUMLARI VE MEDYA ALANI ---
-            st.write("---")
-            st.subheader("💬 Maç Yorumları ve Medya Paylaşımı")
-            
-            with st.form(key=f"comment_form_{m_id}"):
-                c_text = st.text_area("Maç hakkında yorum yazın...", height=80)
-                uploaded_file = st.file_uploader("Fotoğraf veya Video Ekleyin", type=["jpg", "jpeg", "png", "mp4", "mov"])
-                submit_comment = st.form_submit_button("Yayınla")
-                
-                if submit_comment:
-                    media_url = None
-                    media_type = None
-                    
-                    if uploaded_file is not None:
-                        try:
-                            file_ext = uploaded_file.name.split(".")[-1]
-                            file_name = f"{m_id}_{user_id}_{random.randint(1000,9999)}.{file_ext}"
-                            supabase.storage.from_("match-media").upload(file_name, uploaded_file.getvalue())
-                            media_url = supabase.storage.from_("match-media").get_public_url(file_name)
-                            media_type = "video" if file_ext.lower() in ["mp4", "mov"] else "image"
-                        except Exception as e:
-                            st.warning("Medya yüklenemedi. Yorum medyasız ekleniyor.")
-
-                    if c_text.strip() or media_url:
-                        supabase.table("match_comments").insert({
-                            "match_id": m_id,
-                            "user_id": user_id,
-                            "comment": c_text,
-                            "media_url": media_url,
-                            "media_type": media_type
-                        }).execute()
-                        st.success("Yorum eklendi!")
-                        st.rerun()
-
-            comments_res = supabase.table("match_comments").select("*, profiles(full_name)").eq("match_id", m_id).order("created_at", desc=True).execute()
-            if comments_res.data:
-                for comm in comments_res.data:
-                    c_id = comm["id"]
-                    c_author_id = comm["user_id"]
-                    c_author = get_profile_name(comm.get("profiles"))
-                    
-                    is_my_comment = (c_author_id == user_id)
-                    can_delete = is_my_comment or group["is_admin"]
-                    
-                    st.markdown(f"<div class='comment-card'><b>{c_author}</b> <small>({comm['created_at'][:16]})</small><br>{comm['comment']}</div>", unsafe_allow_html=True)
-                    
-                    if comm.get("media_url"):
-                        if comm["media_type"] == "image":
-                            st.image(comm["media_url"], width=300)
-                        elif comm["media_type"] == "video":
-                            st.video(comm["media_url"])
-                            
-                    if can_delete or is_my_comment:
-                        btn_col1, btn_col2, _ = st.columns([1, 1, 6])
-                        if is_my_comment:
-                            if btn_col1.button("✏️ Düzenle", key=f"edit_btn_{c_id}"):
-                                st.session_state[f"editing_{c_id}"] = not st.session_state.get(f"editing_{c_id}", False)
-                                
-                        if can_delete:
-                            if btn_col2.button("🗑️ Sil", key=f"del_btn_{c_id}"):
-                                supabase.table("match_comments").delete().eq("id", c_id).execute()
-                                st.success("Yorum silindi!")
-                                st.rerun()
-
-                    if st.session_state.get(f"editing_{c_id}", False):
-                        with st.form(key=f"edit_form_{c_id}"):
-                            new_text = st.text_area("Yorumu Düzenle", value=comm["comment"])
-                            if st.form_submit_button("Güncelle"):
-                                supabase.table("match_comments").update({"comment": new_text}).eq("id", c_id).execute()
-                                st.session_state[f"editing_{c_id}"] = False
-                                st.success("Yorum güncellendi!")
-                                st.rerun()
-                    st.divider()
-            else:
-                st.caption("Henüz yorum yapılmadı.")
         else:
             st.info("Planlanmış gelecek bir maç bulunmuyor.")
 
     # =========================================================
-    # TAB 2: YENİ MAÇ OLUŞTUR & DIŞARIDAN OYUNCU EKLE
+    # TAB 2: YENİ MAÇ OLUŞTUR
     # =========================================================
     with tab_create:
         if group["is_admin"]:
-            st.subheader("1️⃣ Yeni Maç Planla")
+            st.subheader("➕ Yeni Maç Planla")
             match_date = st.date_input("Maç Tarihi")
             location = st.text_input("Halı Saha / Saha Adı", value="Merkez Halı Saha")
             
@@ -545,7 +483,7 @@ def group_detail():
             
             selected_players = st.multiselect("Gruptan Kadroya Alınacak Oyuncular", options=list(player_dict.keys()), default=list(player_dict.keys()))
             
-            if st.button("Maçı Oluştur"):
+            if st.button("Maçı Oluştur", use_container_width=True):
                 if selected_players:
                     try:
                         match_res = supabase.table("matches").insert({
@@ -559,37 +497,42 @@ def group_detail():
                         players_to_insert = [{"match_id": match_id, "user_id": player_dict[p]} for p in selected_players]
                         supabase.table("match_players").insert(players_to_insert).execute()
                         
-                        st.success("Maç oluşturuldu!")
+                        st.success("Maç başarıyla oluşturuldu!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Hata: {e}")
+        else:
+            st.info("Sadece grup adminleri yeni maç oluşturabilir.")
 
-            st.write("---")
-            # KAYITSIZ OYUNCU EKLEME ALANI
-            st.subheader("2️⃣ Var Olan Maça Dışarıdan Oyuncu Ekle (Kayıtsız)")
+    # =========================================================
+    # ÖZEL SEKME: SADECE ADMİNE ÖZEL DIŞARIDAN OYUNCU EKLEME
+    # =========================================================
+    if group["is_admin"] and tab_custom_player:
+        with tab_custom_player:
+            st.subheader("👤 Dışarıdan / Kayıtsız Oyuncu Ekle (Sadece Admin)")
+            st.write("Kullanıcı hesabı olmayan harici oyuncuları kadro kurma listesine dahil etmek için buradan ekleyebilirsiniz.")
+            
             upcoming_matches = [m for m in matches_list if str(m["match_date"]) >= today_str]
             if upcoming_matches:
                 m_opt = {f"{m['match_date']} - {m['location']}": m["id"] for m in upcoming_matches}
-                sel_m_id = st.selectbox("Oyuncu Eklenecek Maçı Seçin:", list(m_opt.keys()))
+                sel_m_id = st.selectbox("Oyuncu Eklenecek Maçı Seçin:", list(m_opt.keys()), key="custom_p_match_select")
                 
                 custom_player_name = st.text_input("Dışarıdan Gelecek Oyuncunun Adı Soyadı:")
-                if st.button("➕ Oyuncuyu Maç Kadrosuna Ekle"):
+                if st.button("➕ Oyuncuyu Kadroya Dahil Et", use_container_width=True):
                     if custom_player_name.strip():
                         supabase.table("match_players").insert({
                             "match_id": m_opt[sel_m_id],
                             "custom_name": custom_player_name.strip()
                         }).execute()
-                        st.success(f"'{custom_player_name.strip()}' maça başarıyla eklendi!")
+                        st.success(f"'{custom_player_name.strip()}' isimli oyuncu maç kadrosuna başarıyla eklendi!")
                         st.rerun()
                     else:
-                        st.warning("Lütfen bir isim yazın.")
+                        st.warning("Lütfen geçerli bir isim girin.")
             else:
-                st.caption("Dışarıdan oyuncu eklemek için önce bir maç oluşturmalısınız.")
-        else:
-            st.info("Sadece grup adminleri yeni maç oluşturabilir veya dışarıdan oyuncu ekleyebilir.")
+                st.info("Dışarıdan oyuncu ekleyebilmeniz için önce gelecek tarihli bir maç oluşturmalısınız.")
 
     # =========================================================
-    # TAB 3: GRUP ÜYELERİ & KATILIM İSTEKLERİ & DAVET LİNKİ
+    # TAB: GRUP ÜYELERİ & KATILIM İSTEKLERİ & DAVET LİNKİ
     # =========================================================
     with tab_members:
         st.subheader("🔗 Gruba Davet Linki")
@@ -631,10 +574,10 @@ def group_detail():
                 st.caption("Bekleyen katılım isteği bulunmuyor.")
 
     # =========================================================
-    # TAB 4: GEÇMİŞ MAÇLAR
+    # TAB: GEÇMİŞ MAÇLAR & YORUMLAR (SADECE GEÇMİŞ MAÇLARDA)
     # =========================================================
     with tab_past:
-        st.subheader("Oynanmış Grup Maçları")
+        st.subheader("📜 Oynanmış Geçmiş Maçlar")
         past_matches_data = [m for m in matches_list if str(m["match_date"]) < today_str]
         
         if past_matches_data:
@@ -644,14 +587,90 @@ def group_detail():
             
             players_in_match = supabase.table("match_players").select("user_id, custom_name, goals, assists, profiles(full_name)").eq("match_id", selected_match_id).execute()
             
-            st.write("#### 📊 Maç Performansı")
+            st.write("#### 📊 Maç Performansı & İstatistikler")
             table_data = [{"Oyuncu": get_player_display_name(p), "Gol": p["goals"], "Asist": p["assists"]} for p in players_in_match.data]
             st.table(table_data)
+
+            # --- MAÇ YORUMLARI VE MEDYA ALANI (SADECE GEÇMİŞ MAÇLARDA) ---
+            st.write("---")
+            st.subheader("💬 Geçmiş Maç Yorumları ve Medya Paylaşımı")
+            
+            with st.form(key=f"comment_form_{selected_match_id}"):
+                c_text = st.text_area("Maç hakkında yorum yazın...", height=80)
+                uploaded_file = st.file_uploader("Fotoğraf veya Video Ekleyin", type=["jpg", "jpeg", "png", "mp4", "mov"])
+                submit_comment = st.form_submit_button("Yayınla")
+                
+                if submit_comment:
+                    media_url = None
+                    media_type = None
+                    
+                    if uploaded_file is not None:
+                        try:
+                            file_ext = uploaded_file.name.split(".")[-1]
+                            file_name = f"{selected_match_id}_{user_id}_{random.randint(1000,9999)}.{file_ext}"
+                            supabase.storage.from_("match-media").upload(file_name, uploaded_file.getvalue())
+                            media_url = supabase.storage.from_("match-media").get_public_url(file_name)
+                            media_type = "video" if file_ext.lower() in ["mp4", "mov"] else "image"
+                        except Exception as e:
+                            st.warning("Medya yüklenemedi. Yorum medyasız ekleniyor.")
+
+                    if c_text.strip() or media_url:
+                        supabase.table("match_comments").insert({
+                            "match_id": selected_match_id,
+                            "user_id": user_id,
+                            "comment": c_text,
+                            "media_url": media_url,
+                            "media_type": media_type
+                        }).execute()
+                        st.success("Yorum eklendi!")
+                        st.rerun()
+
+            comments_res = supabase.table("match_comments").select("*, profiles(full_name)").eq("match_id", selected_match_id).order("created_at", desc=True).execute()
+            if comments_res.data:
+                for comm in comments_res.data:
+                    c_id = comm["id"]
+                    c_author_id = comm["user_id"]
+                    c_author = get_profile_name(comm.get("profiles"))
+                    
+                    is_my_comment = (c_author_id == user_id)
+                    can_delete = is_my_comment or group["is_admin"]
+                    
+                    st.markdown(f"<div class='comment-card'><b>{c_author}</b> <small>({comm['created_at'][:16]})</small><br>{comm['comment']}</div>", unsafe_allow_html=True)
+                    
+                    if comm.get("media_url"):
+                        if comm["media_type"] == "image":
+                            st.image(comm["media_url"], width=300)
+                        elif comm["media_type"] == "video":
+                            st.video(comm["media_url"])
+                            
+                    if can_delete or is_my_comment:
+                        btn_col1, btn_col2, _ = st.columns([1, 1, 6])
+                        if is_my_comment:
+                            if btn_col1.button("✏️ Düzenle", key=f"edit_btn_{c_id}"):
+                                st.session_state[f"editing_{c_id}"] = not st.session_state.get(f"editing_{c_id}", False)
+                                
+                        if can_delete:
+                            if btn_col2.button("🗑️ Sil", key=f"del_btn_{c_id}"):
+                                supabase.table("match_comments").delete().eq("id", c_id).execute()
+                                st.success("Yorum silindi!")
+                                st.rerun()
+
+                    if st.session_state.get(f"editing_{c_id}", False):
+                        with st.form(key=f"edit_form_{c_id}"):
+                            new_text = st.text_area("Yorumu Düzenle", value=comm["comment"])
+                            if st.form_submit_button("Güncelle"):
+                                supabase.table("match_comments").update({"comment": new_text}).eq("id", c_id).execute()
+                                st.session_state[f"editing_{c_id}"] = False
+                                st.success("Yorum güncellendi!")
+                                st.rerun()
+                    st.divider()
+            else:
+                st.caption("Henüz bu maç için yorum yapılmadı.")
         else:
             st.info("Henüz geçmiş bir maç bulunmuyor.")
 
     # =========================================================
-    # TAB 5: PUAN SIRALAMASI
+    # TAB: PUAN SIRALAMASI
     # =========================================================
     with tab_leaderboard:
         st.subheader("🏆 Genel İstatistikler ve Sıralama")
