@@ -118,6 +118,10 @@ if "together_count" not in st.session_state:
 if "separate_count" not in st.session_state:
     st.session_state.separate_count = 1
 
+# URL Query Parametresinden Davet ID'sini Sakla
+if "group_id" in st.query_params:
+    st.session_state.pending_group_id = st.query_params["group_id"]
+
 # Oturum Açık mı Kontrol Et
 try:
     session = supabase.auth.get_session()
@@ -144,54 +148,88 @@ def get_profile_name(profile_data):
     return "Bilinmeyen Oyuncu"
 
 # ---------------------------------------------------------
-# GRUP DAVET KONTROLÜ
+# GRUP DAVET ONAY EKRANI (Giriş Yapmış Kullanıcılar İçin)
 # ---------------------------------------------------------
-def handle_group_invite():
-    if "group_id" in st.query_params:
-        st.session_state.pending_group_id = st.query_params["group_id"]
+def render_invite_confirmation_screen():
+    group_id = st.session_state.pending_group_id
+    user_id = st.session_state.user.id
 
-    if st.session_state.user is not None and st.session_state.pending_group_id is not None:
-        target_group_id = st.session_state.pending_group_id
-        user_id = st.session_state.user.id
-        
-        member_check = supabase.table("group_members").select("*").eq("group_id", target_group_id).eq("user_id", user_id).execute()
-        
-        if member_check.data:
-            group_data = supabase.table("groups").select("id, name").eq("id", target_group_id).execute()
-            if group_data.data:
-                g = group_data.data[0]
-                st.session_state.selected_group = {
-                    "id": g["id"],
-                    "name": g["name"],
-                    "is_admin": member_check.data[0]["is_admin"],
-                    "is_left": member_check.data[0].get("is_left", False)
-                }
+    # Grubun adını çek
+    group_res = supabase.table("groups").select("id, name").eq("id", group_id).execute()
+    
+    if not group_res.data:
+        st.error("❌ Davet edildiğiniz grup bulunamadı veya silinmiş.")
+        if st.button("Ana Sayfaya Git", use_container_width=True):
+            st.session_state.pending_group_id = None
+            st.query_params.clear()
+            st.rerun()
+        return
+
+    group_data = group_res.data[0]
+
+    # Kullanıcı zaten grubun üyesi mi?
+    member_check = supabase.table("group_members").select("*").eq("group_id", group_id).eq("user_id", user_id).execute()
+    if member_check.data:
+        st.success(f"🎉 **{group_data['name']}** grubunun zaten bir üyesisiniz!")
+        if st.button("Gruba Git", use_container_width=True):
+            st.session_state.selected_group = {
+                "id": group_data["id"],
+                "name": group_data["name"],
+                "is_admin": member_check.data[0].get("is_admin", False),
+                "is_left": member_check.data[0].get("is_left", False)
+            }
+            st.session_state.pending_group_id = None
+            st.query_params.clear()
+            st.rerun()
+        return
+
+    # Bekleyen bir katılım isteği var mı?
+    req_check = supabase.table("group_join_requests").select("*").eq("group_id", group_id).eq("user_id", user_id).eq("status", "pending").execute()
+    if req_check.data:
+        st.info(f"⏳ **{group_data['name']}** grubuna katılım isteğiniz zaten iletilmiş. Admin onayı bekleniyor.")
+        if st.button("Ana Sayfaya Dön", use_container_width=True):
+            st.session_state.pending_group_id = None
+            st.query_params.clear()
+            st.rerun()
+        return
+
+    # ONAY / İPTAL FORMU
+    st.markdown("<h2 class='main-title'>⚽ GRUP DAVETİ</h2>", unsafe_allow_html=True)
+    st.info(f"**{group_data['name']}** grubuna katılmak üzere davet edildiniz.")
+    st.write("Gruba katılma isteği gönderdikten sonra grup admini onayladığında maç kadrolarına dahil olabilirsiniz.")
+    st.divider()
+
+    col_approve, col_reject = st.columns(2)
+
+    with col_approve:
+        if st.button("✅ İsteği Admin'e Gönder", use_container_width=True):
+            try:
+                supabase.table("group_join_requests").insert({
+                    "group_id": group_id,
+                    "user_id": user_id,
+                    "status": "pending"
+                }).execute()
+                st.success("🎉 Katılım isteğiniz grup adminine iletildi!")
                 st.session_state.pending_group_id = None
                 st.query_params.clear()
                 st.rerun()
-        else:
-            try:
-                supabase.table("group_join_requests").insert({
-                    "group_id": target_group_id,
-                    "user_id": user_id
-                }).execute()
-                st.toast("🎉 Davet linki ile katılım isteğiniz gruba iletildi!", icon="✅")
-            except Exception:
-                pass
+            except Exception as e:
+                st.error(f"İstek gönderilirken hata oluştu: {e}")
+
+    with col_reject:
+        if st.button("❌ Vazgeç / İptal Et", use_container_width=True):
             st.session_state.pending_group_id = None
             st.query_params.clear()
+            st.rerun()
 
 # ---------------------------------------------------------
-# Kimlik Doğrulama Ekranı
+# Kimlik Doğrulama Ekranı (Giriş Yapılmamışsa)
 # ---------------------------------------------------------
 def auth_screen():
     st.markdown("<h1 class='main-title'>⚽ HALISAHA TAKİP SİSTEMİ</h1>", unsafe_allow_html=True)
     
-    if "group_id" in st.query_params:
-        st.session_state.pending_group_id = st.query_params["group_id"]
-
     if st.session_state.pending_group_id is not None:
-        st.info("👋 Bir gruba katılmak için davet edildiniz! Lütfen kendi hesabınızla giriş yapın veya yeni bir hesap oluşturun.")
+        st.warning("👋 Bir gruba katılmak için davet edildiniz! Lütfen kendi hesabınızla giriş yapın veya yeni bir hesap oluşturun.")
 
     tab1, tab2 = st.tabs(["Giriş Yap", "Kayıt Ol"])
     
@@ -207,7 +245,6 @@ def auth_screen():
                     res = supabase.auth.sign_in_with_password({"email": email, "password": password})
                     st.session_state.user = res.user
                     st.success("Giriş başarılı!")
-                    handle_group_invite()
                     st.rerun()
                 except Exception as e:
                     st.error(f"Giriş başarısız: {e}")
@@ -232,7 +269,6 @@ def auth_screen():
                         })
                         st.session_state.user = res.user
                         st.success("Kayıt başarılı!")
-                        handle_group_invite()
                         st.rerun()
                     except Exception as e:
                         st.error(f"Kayıt işlemi başarısız: {e}")
@@ -248,6 +284,8 @@ def main_dashboard():
         supabase.auth.sign_out()
         st.session_state.user = None
         st.session_state.selected_group = None
+        st.session_state.pending_group_id = None
+        st.query_params.clear()
         st.rerun()
 
     col1, col2 = st.columns([2, 1])
@@ -481,10 +519,9 @@ def group_detail():
                         half = len(plist) // 2
                         t_a, t_b = plist[:half], plist[half:]
                         
-                        # Beraber oynaması gerekenleri düzenle (Takım dengesini bozmadan Takas Yap)
+                        # Beraber oynaması gerekenleri düzenle
                         for p1, p2 in together_pairs:
                             if p1 in t_a and p2 in t_b:
-                                # t_a'dan p2 dışındaki başka birini t_b'ye kaydır, p2'yi t_a'ya al
                                 swap_candidate = [x for x in t_a if x != p1][0] if len(t_a) > 1 else None
                                 if swap_candidate:
                                     t_a.remove(swap_candidate); t_b.append(swap_candidate)
@@ -623,10 +660,10 @@ def group_detail():
     # =========================================================
     with tab_members:
         st.subheader("🔗 Gruba Davet Linki")
-        base_url = "https://halisaha-takip.streamlit.app"
+        base_url = "https://halisaha-takip.streamlit.app"  # Kendi yayın adresinize göre güncelleyebilirsiniz
         invite_link = f"{base_url}/?group_id={group['id']}"
         st.code(invite_link, language="text")
-        st.caption("Bu linki paylaştığınızda; grup üyeleri doğrudan gruba girer, üye olmayanlar doğrudan giriş/kayıt ekranına yönlendirilir.")
+        st.caption("Bu linki paylaştığınızda; kullanıcı oturum açmışsa onay ekranı gelir, oturumu yoksa giriş yaptıktan sonra onay ekranı açılır.")
         st.divider()
 
         st.subheader("👥 Grup Üyeleri")
@@ -704,7 +741,6 @@ def group_detail():
                     leaderboard[name]["Toplam Asist"] += assists
                     leaderboard[name]["Toplam Skoru (Skor Katkısı)"] += (goals + assists)
 
-                # Dict yapısını listeye çevirip puana göre sıralama
                 lb_list = [{"Oyuncu": k, **v} for k, v in leaderboard.items()]
                 lb_list = sorted(lb_list, key=lambda x: x["Toplam Skoru (Skor Katkısı)"], reverse=True)
                 
@@ -715,13 +751,23 @@ def group_detail():
             st.info("Henüz istatistiki veri oluşturacak geçmiş bir maç oynanmadı.")
 
 # ---------------------------------------------------------
-# Uygulama Yönlendirme (Routing)
+# UYGULAMA YÖNLENDİRME MERKEZİ (ROUTING)
 # ---------------------------------------------------------
-if st.session_state.user is None:
-    auth_screen()
-else:
-    handle_group_invite()
-    if st.session_state.selected_group is None:
-        main_dashboard()
+def main():
+    # 1. Kullanıcı Giriş Yapmamışsa -> Giriş/Kayıt Ekranı
+    if st.session_state.user is None:
+        auth_screen()
+        
+    # 2. Kullanıcı Giriş Yapmış VE Davet Linkiyle Gelmişse -> Davet Onay Ekranı
+    elif st.session_state.pending_group_id is not None:
+        render_invite_confirmation_screen()
+        
+    # 3. Standart Akış -> Gruplarım veya Seçili Grup Detayı
     else:
-        group_detail()
+        if st.session_state.selected_group is None:
+            main_dashboard()
+        else:
+            group_detail()
+
+if __name__ == "__main__":
+    main()
