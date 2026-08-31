@@ -236,10 +236,10 @@ def auth_screen():
                         st.error(f"Kayıt işlemi başarısız: {e}")
 
 # ---------------------------------------------------------
-# Ana Dashboard (İsme Tıklayıp Girme, 3 Nokta Menüsü & Grup Arama)
+# Ana Dashboard (İsme Tıklayıp Girme & 3 Nokta Menüsü)
 # ---------------------------------------------------------
 def main_dashboard():
-    st.markdown("<h1 class='main-title'>⚽ HALISAHA PANOLARI</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-title'>⚽ HALISAHA GRUPLARIM</h1>", unsafe_allow_html=True)
     user_id = st.session_state.user.id
     col1, col2 = st.columns([2, 1])
     
@@ -247,13 +247,11 @@ def main_dashboard():
         st.subheader("Dahil Olduğunuz Gruplar")
         memberships = supabase.table("group_members").select("group_id, is_admin, is_left, groups(id, name)").eq("user_id", user_id).execute()
         
-        my_group_ids = []
         if memberships.data:
             for item in memberships.data:
                 group = item.get("groups")
                 if not group:
                     continue
-                my_group_ids.append(group["id"])
                 is_admin = item["is_admin"]
                 is_left = item.get("is_left", False)
                 
@@ -284,51 +282,6 @@ def main_dashboard():
                 st.divider()
         else:
             st.info("Henüz herhangi bir gruba dahil değilsiniz.")
-
-        # ---------------------------------------------------------
-        # YENİ EKLENEN: GRUP ARAMA VE KATILIM İSTEĞİ GÖNDERME
-        # ---------------------------------------------------------
-        st.write("---")
-        st.subheader("🔍 Varolan Gruplarda Ara & Katıl")
-        search_query = st.text_input("Grup Adı İle Arama Yapın", placeholder="Örn: Salı Halısahası...")
-        
-        if search_query.strip():
-            # Arama filtresi
-            search_res = supabase.table("groups").select("id, name").ilike("name", f"%{search_query.strip()}%").execute()
-            
-            if search_res.data:
-                st.caption(f"Bulunan Gruplar ({len(search_res.data)}):")
-                for s_group in search_res.data:
-                    s_id = s_group["id"]
-                    s_name = s_group["name"]
-                    
-                    # Kullanıcı zaten bu gruba üye mi?
-                    if s_id in my_group_ids:
-                        st.write(f"⚽ **{s_name}** *(Zaten üyesiniz)*")
-                    else:
-                        # Bekleyen istek var mı kontrol et
-                        req_check = supabase.table("group_join_requests").select("status").eq("group_id", s_id).eq("user_id", user_id).execute()
-                        
-                        col_s_name, col_s_btn = st.columns([3, 1])
-                        col_s_name.write(f"⚽ **{s_name}**")
-                        
-                        if req_check.data and req_check.data[0]["status"] == "pending":
-                            col_s_btn.warning("İstek Beklemede")
-                        else:
-                            if col_s_btn.button("📩 Katılım İsteği At", key=f"req_btn_{s_id}"):
-                                try:
-                                    supabase.table("group_join_requests").upsert({
-                                        "group_id": s_id,
-                                        "user_id": user_id,
-                                        "status": "pending"
-                                    }).execute()
-                                    st.success(f"'{s_name}' grubuna katılım isteğiniz iletildi!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"İstek gönderilemedi: {e}")
-                    st.divider()
-            else:
-                st.info("Aramanızla eşleşen bir grup bulunamadı.")
 
     with col2:
         st.subheader("Yeni Grup Oluştur")
@@ -471,4 +424,47 @@ def group_detail():
                                     supabase.table("match_squad_drafts").update({"is_approved": False}).eq("match_id", m_id).execute()
                                     supabase.table("match_squad_drafts").update({"is_approved": True}).eq("id", d["id"]).execute()
                                     st.success("Resmi kadro onaylandı!")
+                                    st.rerun()
+                                st.divider()
+                        else:
+                            st.caption("Henüz herhangi bir kullanıcı kadro önerisi göndermedi.")
+
+                if not is_left:
+                    st.markdown("### 🛠️ Kendi Kadro Taslağını Kur")
+                    
+                    st.markdown("#### 1️⃣ Oyuncu İlişki Şartları")
+                    col_to, col_sep = st.columns(2)
+                    
+                    together_pairs = []
+                    with col_to:
+                        st.caption("🤝 Beraber Oynaması İstenen İkililer")
+                        for i in range(st.session_state.together_count):
+                            c1, c2 = st.columns(2)
+                            p1 = c1.selectbox(f"Birlikte #{i+1} Oyuncu A", player_names, key=f"tog_a_{i}")
+                            p2 = c2.selectbox(f"Birlikte #{i+1} Oyuncu B", player_names, key=f"tog_b_{i}")
+                            together_pairs.append([p1, p2])
+                        if st.button("➕ Yeni Beraber Oynayacak İkili Ekle"):
+                            st.session_state.together_count += 1
+                            st.rerun()
+
+                    separate_pairs = []
+                    with col_sep:
+                        st.caption("⚔️ Ayrı Takımlarda Oynaması İstenen İkililer")
+                        for i in range(st.session_state.separate_count):
+                            c1, c2 = st.columns(2)
+                            p1 = c1.selectbox(f"Ayrı #{i+1} Oyuncu A", player_names, key=f"sep_a_{i}")
+                            p2 = c2.selectbox(f"Ayrı #{i+1} Oyuncu B", player_names, key=f"sep_b_{i}")
+                            separate_pairs.append([p1, p2])
+                        if st.button("➕ Yeni Ayrı Oynayacak İkili Ekle"):
+                            st.session_state.separate_count += 1
+                            st.rerun()
+
+                    if "current_team_a" not in st.session_state:
+                        st.session_state.current_team_a = saved_draft["team_a"] if saved_draft else player_names[:len(player_names)//2]
+                    if "current_team_b" not in st.session_state:
+                        st.session_state.current_team_b = saved_draft["team_b"] if saved_draft else player_names[len(player_names)//2:]
+
+                    st.markdown("#### 2️⃣ Kadro Oluşturma Yöntemi")
+                    if st.button("🎲 Şartlara Göre Rastgele Kadro Kur"):
+                        plist = player_names.copy()
               
