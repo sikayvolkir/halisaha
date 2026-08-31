@@ -61,8 +61,14 @@ if st.session_state.user is None:
                         "password": login_password
                     })
                     st.session_state.user = res.user
-                    prof = supabase.table("profiles").select("*").eq("id", res.user.id).single().execute()
-                    st.session_state.profile = prof.data
+                    
+                    # Güvenli profil çekme (Hata almamak için)
+                    prof = supabase.table("profiles").select("*").eq("id", res.user.id).execute()
+                    if prof.data and len(prof.data) > 0:
+                        st.session_state.profile = prof.data[0]
+                    else:
+                        st.session_state.profile = {"full_name": login_email.split("@")[0]}
+                        
                     st.success("Başarıyla giriş yapıldı!")
                     st.rerun()
                 except Exception as e:
@@ -99,12 +105,14 @@ if st.session_state.user is None:
 # MAIN DASHBOARD (LOGGED IN)
 # =========================================================
 user = st.session_state.user
-profile = st.session_state.profile
+profile = st.session_state.profile or {}
 
 # Sidebar Navigation & User Info
 with st.sidebar:
-    st.write(f"👋 **Hoş geldin, {profile.get('full_name', 'Oyuncu')}**")
-    st.caption(f"📧 {user.email}")
+    # Safe profile name extraction (AttributeError önleyici)
+    user_name = profile.get("full_name", user.email.split("@")[0] if user and user.email else "Oyuncu")
+    st.write(f"👋 **Hoş geldin, {user_name}**")
+    st.caption(f"📧 {user.email if user else ''}")
     
     if st.button("🚪 Çıkış Yap"):
         supabase.auth.sign_out()
@@ -348,7 +356,7 @@ with tab_ratings:
 with tab_members:
     st.subheader("📲 Gruba Davet Linki & WhatsApp Paylaşımı")
     
-    # Live Application Public URL (Update with your actual deployed app URL if different)
+    # Live Application Public URL (Kendi canlı URL adresinizle güncelleyebilirsiniz)
     app_base_url = "https://halisaha-takip.streamlit.app"
     invite_link = f"{app_base_url}/?group_id={group['id']}"
     
