@@ -120,6 +120,16 @@ if "together_count" not in st.session_state:
 if "separate_count" not in st.session_state:
     st.session_state.separate_count = 1
 
+def get_player_display_name(p_item):
+    if p_item.get("custom_name"):
+        return p_item["custom_name"]
+    profile = p_item.get("profiles")
+    if isinstance(profile, dict):
+        return profile.get("full_name", "Bilinmeyen Oyuncu")
+    elif isinstance(profile, list) and len(profile) > 0:
+        return profile[0].get("full_name", "Bilinmeyen Oyuncu")
+    return "Bilinmeyen Oyuncu"
+
 def get_profile_name(profile_data):
     if isinstance(profile_data, dict):
         return profile_data.get("full_name", "Bilinmeyen Oyuncu")
@@ -235,7 +245,7 @@ def main_dashboard():
                     st.info("Bu gruba zaten istek gönderdiniz veya zaten üyesiniz.")
 
 # ---------------------------------------------------------
-# Sahada Kadro Gösterme Bileşeni (Saha İçinde Listeleme)
+# Sahada Kadro Gösterme Bileşeni
 # ---------------------------------------------------------
 def render_pitch(team_a, team_b):
     st.markdown("<div class='football-pitch'><div class='pitch-center-line'></div>", unsafe_allow_html=True)
@@ -295,8 +305,9 @@ def group_detail():
             selected_match = match_options[selected_match_label]
             m_id = selected_match["id"]
             
-            players_res = supabase.table("match_players").select("user_id, profiles(full_name)").eq("match_id", m_id).execute()
-            player_names = [get_profile_name(p.get("profiles")) for p in players_res.data]
+            # Kayıtlı & Kayıtsız (Custom) oyuncuların tamamını al
+            players_res = supabase.table("match_players").select("user_id, custom_name, profiles(full_name)").eq("match_id", m_id).execute()
+            player_names = [get_player_display_name(p) for p in players_res.data]
             if not player_names:
                 player_names = ["Oyuncu Bulunamadı"]
 
@@ -393,7 +404,6 @@ def group_detail():
                         key="man_select_a_side"
                     )
                 
-                # B takımı seçeneğinden A takımında seçilmiş olan oyuncuları düş
                 remaining_for_b = [p for p in player_names if p not in selected_a]
                 
                 with man_col_b:
@@ -522,18 +532,18 @@ def group_detail():
             st.info("Planlanmış gelecek bir maç bulunmuyor.")
 
     # =========================================================
-    # TAB 2: YENİ MAÇ OLUŞTUR
+    # TAB 2: YENİ MAÇ OLUŞTUR & DIŞARIDAN OYUNCU EKLE
     # =========================================================
     with tab_create:
-        st.subheader("Yeni Maç Planla")
         if group["is_admin"]:
+            st.subheader("1️⃣ Yeni Maç Planla")
             match_date = st.date_input("Maç Tarihi")
             location = st.text_input("Halı Saha / Saha Adı", value="Merkez Halı Saha")
             
             members_data = supabase.table("group_members").select("user_id, profiles(full_name)").eq("group_id", group["id"]).execute()
             player_dict = {get_profile_name(m.get("profiles")): m["user_id"] for m in members_data.data}
             
-            selected_players = st.multiselect("Kadroya Alınacak Oyuncular", options=list(player_dict.keys()), default=list(player_dict.keys()))
+            selected_players = st.multiselect("Gruptan Kadroya Alınacak Oyuncular", options=list(player_dict.keys()), default=list(player_dict.keys()))
             
             if st.button("Maçı Oluştur"):
                 if selected_players:
@@ -550,10 +560,33 @@ def group_detail():
                         supabase.table("match_players").insert(players_to_insert).execute()
                         
                         st.success("Maç oluşturuldu!")
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Hata: {e}")
+
+            st.write("---")
+            # KAYITSIZ OYUNCU EKLEME ALANI
+            st.subheader("2️⃣ Var Olan Maça Dışarıdan Oyuncu Ekle (Kayıtsız)")
+            upcoming_matches = [m for m in matches_list if str(m["match_date"]) >= today_str]
+            if upcoming_matches:
+                m_opt = {f"{m['match_date']} - {m['location']}": m["id"] for m in upcoming_matches}
+                sel_m_id = st.selectbox("Oyuncu Eklenecek Maçı Seçin:", list(m_opt.keys()))
+                
+                custom_player_name = st.text_input("Dışarıdan Gelecek Oyuncunun Adı Soyadı:")
+                if st.button("➕ Oyuncuyu Maç Kadrosuna Ekle"):
+                    if custom_player_name.strip():
+                        supabase.table("match_players").insert({
+                            "match_id": m_opt[sel_m_id],
+                            "custom_name": custom_player_name.strip()
+                        }).execute()
+                        st.success(f"'{custom_player_name.strip()}' maça başarıyla eklendi!")
+                        st.rerun()
+                    else:
+                        st.warning("Lütfen bir isim yazın.")
+            else:
+                st.caption("Dışarıdan oyuncu eklemek için önce bir maç oluşturmalısınız.")
         else:
-            st.info("Sadece grup adminleri yeni maç oluşturabilir.")
+            st.info("Sadece grup adminleri yeni maç oluşturabilir veya dışarıdan oyuncu ekleyebilir.")
 
     # =========================================================
     # TAB 3: GRUP ÜYELERİ & KATILIM İSTEKLERİ & DAVET LİNKİ
@@ -609,10 +642,10 @@ def group_detail():
             selected_match_label = st.selectbox("Bir Geçmiş Maç Seçin:", list(match_options.keys()))
             selected_match_id = match_options[selected_match_label]
             
-            players_in_match = supabase.table("match_players").select("user_id, goals, assists, profiles(full_name)").eq("match_id", selected_match_id).execute()
+            players_in_match = supabase.table("match_players").select("user_id, custom_name, goals, assists, profiles(full_name)").eq("match_id", selected_match_id).execute()
             
             st.write("#### 📊 Maç Performansı")
-            table_data = [{"Oyuncu": get_profile_name(p.get("profiles")), "Gol": p["goals"], "Asist": p["assists"]} for p in players_in_match.data]
+            table_data = [{"Oyuncu": get_player_display_name(p), "Gol": p["goals"], "Asist": p["assists"]} for p in players_in_match.data]
             st.table(table_data)
         else:
             st.info("Henüz geçmiş bir maç bulunmuyor.")
