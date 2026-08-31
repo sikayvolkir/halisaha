@@ -32,13 +32,6 @@ st.markdown("""
         background-color: #2ea44f;
         color: white;
     }
-    .card {
-        background-color: #161b22;
-        border: 1px solid #30363d;
-        padding: 15px;
-        border-radius: 8px;
-        margin-bottom: 15px;
-    }
     .comment-card {
         background-color: #161b22;
         border-left: 3px solid #238636;
@@ -47,7 +40,7 @@ st.markdown("""
         border-radius: 4px;
     }
 
-    /* Tamamen Saha İçi Yapısı */
+    /* Saha İçi Yapısı */
     .pitch-container {
         background-color: #2e7d32;
         background-image: linear-gradient(to right, rgba(255,255,255,0.15) 50%, transparent 50%);
@@ -118,12 +111,14 @@ if "user" not in st.session_state:
     st.session_state.user = None
 if "selected_group" not in st.session_state:
     st.session_state.selected_group = None
+if "pending_group_id" not in st.session_state:
+    st.session_state.pending_group_id = None
 if "together_count" not in st.session_state:
     st.session_state.together_count = 1
 if "separate_count" not in st.session_state:
     st.session_state.separate_count = 1
 
-# Oturumun Yenilemelerde Kalıcı Olması
+# Oturum Açık mı Kontrol Et
 try:
     session = supabase.auth.get_session()
     if session and session.user:
@@ -149,50 +144,55 @@ def get_profile_name(profile_data):
     return "Bilinmeyen Oyuncu"
 
 # ---------------------------------------------------------
-# Davet & Derin Bağlantı (Deep Link) Kontrolü
+# SADECE GRUP DAVET KONTROLÜ
 # ---------------------------------------------------------
-def handle_invite():
-    query_params = st.query_params
-    if "group_id" in query_params:
-        target_group_id = query_params["group_id"]
-        target_match_id = query_params.get("match_id", None)
+def handle_group_invite():
+    # 1. URL'den group_id parametresini yakala ve sakla
+    if "group_id" in st.query_params:
+        st.session_state.pending_group_id = st.query_params["group_id"]
+        st.query_params.clear()
+
+    # 2. Eğer kullanıcı giriş yapmışsa ve elinde grup daveti varsa işle
+    if st.session_state.user is not None and st.session_state.pending_group_id is not None:
+        target_group_id = st.session_state.pending_group_id
+        user_id = st.session_state.user.id
         
-        if st.session_state.user is not None:
-            user_id = st.session_state.user.id
-            member_check = supabase.table("group_members").select("*").eq("group_id", target_group_id).eq("user_id", user_id).execute()
-            
-            if member_check.data:
-                group_data = supabase.table("groups").select("id, name").eq("id", target_group_id).execute()
-                if group_data.data:
-                    g = group_data.data[0]
-                    st.session_state.selected_group = {
-                        "id": g["id"],
-                        "name": g["name"],
-                        "is_admin": member_check.data[0]["is_admin"],
-                        "is_left": member_check.data[0].get("is_left", False),
-                        "target_match_id": target_match_id
-                    }
-                    st.query_params.clear()
-                    st.rerun()
-            else:
-                try:
-                    supabase.table("group_join_requests").insert({
-                        "group_id": target_group_id,
-                        "user_id": user_id
-                    }).execute()
-                    st.toast("🎉 Davet linki ile katılım isteğiniz gruba iletildi!", icon="✅")
-                except Exception:
-                    pass
-                st.query_params.clear()
+        # Kullanıcı zaten grup üyesi mi?
+        member_check = supabase.table("group_members").select("*").eq("group_id", target_group_id).eq("user_id", user_id).execute()
+        
+        if member_check.data:
+            # Zaten üye -> Doğrudan o gruba gir
+            group_data = supabase.table("groups").select("id, name").eq("id", target_group_id).execute()
+            if group_data.data:
+                g = group_data.data[0]
+                st.session_state.selected_group = {
+                    "id": g["id"],
+                    "name": g["name"],
+                    "is_admin": member_check.data[0]["is_admin"],
+                    "is_left": member_check.data[0].get("is_left", False)
+                }
+                st.session_state.pending_group_id = None
+                st.rerun()
+        else:
+            # Üye değil -> Katılım isteği at
+            try:
+                supabase.table("group_join_requests").insert({
+                    "group_id": target_group_id,
+                    "user_id": user_id
+                }).execute()
+                st.toast("🎉 Davet linki ile katılım isteğiniz gruba iletildi!", icon="✅")
+            except Exception:
+                pass
+            st.session_state.pending_group_id = None
 
 # ---------------------------------------------------------
-# Kimlik Doğrulama Ekranı
+# Kimlik Doğrulama Ekranı (Doğrudan Karşılama)
 # ---------------------------------------------------------
 def auth_screen():
     st.markdown("<h1 class='main-title'>⚽ HALISAHA TAKİP SİSTEMİ</h1>", unsafe_allow_html=True)
     
-    if "group_id" in st.query_params:
-        st.info("👋 Bir gruba katılmak veya maçı görüntülemek için davet edildiniz! Lütfen giriş yapın veya kayıt olun.")
+    if st.session_state.pending_group_id is not None:
+        st.info("👋 Bir gruba katılmak için davet edildiniz! Lütfen kendi hesabınızla giriş yapın veya yeni bir hesap oluşturun.")
 
     tab1, tab2 = st.tabs(["Giriş Yap", "Kayıt Ol"])
     
@@ -201,14 +201,14 @@ def auth_screen():
         with st.form("login_form", clear_on_submit=False):
             email = st.text_input("E-Posta", key="login_email")
             password = st.text_input("Şifre", type="password", key="login_password")
-            submit_login = st.form_submit_button("Giriş Yap (Enter)", use_container_width=True)
+            submit_login = st.form_submit_button("Giriş Yap", use_container_width=True)
             
             if submit_login:
                 try:
                     res = supabase.auth.sign_in_with_password({"email": email, "password": password})
                     st.session_state.user = res.user
                     st.success("Giriş başarılı!")
-                    handle_invite()
+                    handle_group_invite()
                     st.rerun()
                 except Exception as e:
                     st.error(f"Giriş başarısız: {e}")
@@ -219,7 +219,7 @@ def auth_screen():
             full_name = st.text_input("Ad Soyad", key="reg_name")
             email = st.text_input("E-Posta", key="reg_email")
             password = st.text_input("Şifre (En az 6 karakter)", type="password", key="reg_password")
-            submit_reg = st.form_submit_button("Kayıt Ol (Enter)", use_container_width=True)
+            submit_reg = st.form_submit_button("Kayıt Ol", use_container_width=True)
             
             if submit_reg:
                 if not full_name.strip():
@@ -233,7 +233,7 @@ def auth_screen():
                         })
                         st.session_state.user = res.user
                         st.success("Kayıt başarılı!")
-                        handle_invite()
+                        handle_group_invite()
                         st.rerun()
                     except Exception as e:
                         st.error(f"Kayıt işlemi başarısız: {e}")
@@ -244,6 +244,14 @@ def auth_screen():
 def main_dashboard():
     st.markdown("<h1 class='main-title'>⚽ HALISAHA GRUPLARIM</h1>", unsafe_allow_html=True)
     user_id = st.session_state.user.id
+    
+    # Çıkış Butonu
+    if st.button("🚪 Oturumu Kapat"):
+        supabase.auth.sign_out()
+        st.session_state.user = None
+        st.session_state.selected_group = None
+        st.rerun()
+
     col1, col2 = st.columns([2, 1])
     
     with col1:
@@ -276,11 +284,11 @@ def main_dashboard():
                         if not is_left:
                             if st.button("🚪 Gruptan Çık", key=f"leave_{group['id']}"):
                                 supabase.table("group_members").update({"is_left": True}).eq("group_id", group["id"]).eq("user_id", user_id).execute()
-                                st.success("Gruptan çıkıldı. Geçmiş maçları inceleyebilirsiniz.")
+                                st.success("Gruptan çıkıldı.")
                                 st.rerun()
                         if st.button("🗑️ Grubu Sil", key=f"del_{group['id']}"):
                             supabase.table("group_members").delete().eq("group_id", group["id"]).eq("user_id", user_id).execute()
-                            st.success("Grup listenizden kaldırıldı.")
+                            st.success("Grup silindi.")
                             st.rerun()
                 st.divider()
         else:
@@ -290,7 +298,7 @@ def main_dashboard():
         st.subheader("Yeni Grup Oluştur")
         with st.form("create_group_form", clear_on_submit=True):
             new_group_name = st.text_input("Grup Adı")
-            submit_group = st.form_submit_button("Grubu Kur (Enter)", use_container_width=True)
+            submit_group = st.form_submit_button("Grubu Kur", use_container_width=True)
             if submit_group:
                 if new_group_name.strip():
                     try:
@@ -308,9 +316,9 @@ def main_dashboard():
                         st.success("Grup başarıyla oluşturuldu!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Grup oluşturulurken hata: {e}")
+                        st.error(f"Hata: {e}")
                 else:
-                    st.warning("Lütfen bir grup adı girin.")
+                    st.warning("Lütfen grup adı girin.")
 
 # ---------------------------------------------------------
 # Sahada Kadro Gösterme Bileşeni
@@ -351,8 +359,6 @@ def group_detail():
         st.rerun()
         
     st.markdown(f"<h1 class='main-title'>⚽ {group['name']}</h1>", unsafe_allow_html=True)
-    if is_left:
-        st.warning("🔒 Bu gruptan ayrıldığınız için verileri yalnızca görüntüleyebilirsiniz. Yeni kadro kuramaz veya değişiklik yapamazsınız.")
 
     tabs_list = ["📅 Gelecek Maçlar & Kadrolar"]
     if not is_left:
@@ -394,29 +400,9 @@ def group_detail():
         
         if upcoming_matches_data:
             match_options = {f"{m['match_date']} - {m['location']}": m for m in upcoming_matches_data}
-            
-            # Direct link ile bir maça girilmişse onu varsayılan yap
-            target_m_id = group.get("target_match_id")
-            default_index = 0
-            match_keys = list(match_options.keys())
-            if target_m_id:
-                for i, (label, m_data) in enumerate(match_options.items()):
-                    if m_data["id"] == target_m_id:
-                        default_index = i
-                        break
-            
-            selected_match_label = st.selectbox("Maç Seçin:", match_keys, index=default_index, key="upcoming_select")
+            selected_match_label = st.selectbox("Maç Seçin:", list(match_options.keys()), key="upcoming_select")
             selected_match = match_options[selected_match_label]
             m_id = selected_match["id"]
-            
-            # --- BU MAÇIN DOĞRUDAN PAYLAŞIM LİNKİ ---
-            base_url = "https://halisaha-takip.streamlit.app"
-            direct_match_link = f"{base_url}/?group_id={group['id']}&match_id={m_id}"
-            with st.popover("🔗 Bu Maçın Linkini Paylaş"):
-                st.write("Bu bağlantıyı paylaşarak arkadaşlarınızın doğrudan bu maçın kadro planlamasına gelmesini sağlayabilirsiniz:")
-                st.code(direct_match_link, language="text")
-            st.divider()
-            # ----------------------------------------
 
             players_res = supabase.table("match_players").select("user_id, custom_name, profiles(full_name)").eq("match_id", m_id).execute()
             player_names = [get_player_display_name(p) for p in players_res.data]
@@ -612,8 +598,8 @@ def group_detail():
                 sel_m_id = st.selectbox("Oyuncu Eklenecek Maçı Seçin:", list(m_opt.keys()), key="custom_p_match_select")
                 
                 with st.form(key="add_custom_player_form", clear_on_submit=True):
-                    custom_name_val = st.text_input("Dışarıdan Gelecek Oyuncunun Adı Soyadı:", placeholder="İsim yazın ve Enter'a basın...")
-                    submit_custom_p = st.form_submit_button("➕ Oyuncuyu Kadroya Dahil Et (Enter)")
+                    custom_name_val = st.text_input("Dışarıdan Gelecek Oyuncunun Adı Soyadı:")
+                    submit_custom_p = st.form_submit_button("➕ Oyuncuyu Kadroya Dahil Et")
                     
                     if submit_custom_p:
                         if custom_name_val.strip():
@@ -626,27 +612,15 @@ def group_detail():
                         else:
                             st.warning("Lütfen bir isim girin.")
 
-                st.write("---")
-                st.subheader("📋 Bu Maçın Mevcut Kadrosu")
-                curr_players = supabase.table("match_players").select("user_id, custom_name, profiles(full_name)").eq("match_id", m_opt[sel_m_id]).execute()
-                
-                if curr_players.data:
-                    for i, p in enumerate(curr_players.data, 1):
-                        p_name = get_player_display_name(p)
-                        tag = " (Kayıtsız Dış Oyuncu)" if p.get("custom_name") else " (Grup Üyesi)"
-                        st.write(f"**{i}.** {p_name} <small style='color:#8b949e;'>{tag}</small>", unsafe_allow_html=True)
-                else:
-                    st.caption("Bu maça henüz oyuncu eklenmedi.")
-
     # =========================================================
-    # TAB: GRUP ÜYELERİ & KATILIM İSTEKLERİ
+    # TAB: GRUP ÜYELERİ & SADECE GRUP PAYLAŞIM LİNKİ
     # =========================================================
     with tab_members:
         st.subheader("🔗 Gruba Davet Linki")
         base_url = "https://halisaha-takip.streamlit.app"
         invite_link = f"{base_url}/?group_id={group['id']}"
         st.code(invite_link, language="text")
-        st.caption("Bu bağlantıyı paylaşarak arkadaşlarınızı gruba davet edebilirsiniz (Mevcut üyeler doğrudan gruba girer).")
+        st.caption("Bu linki paylaştığınızda; grup üyeleri doğrudan gruba girer, üye olmayanlar doğrudan giriş/kayıt ekranına yönlendirilir.")
         st.divider()
 
         st.subheader("👥 Grup Üyeleri")
@@ -681,7 +655,7 @@ def group_detail():
                         st.rerun()
 
     # =========================================================
-    # TAB: GEÇMİŞ MAÇLAR & YORUMLAR
+    # TAB: GEÇMİŞ MAÇLAR
     # =========================================================
     with tab_past:
         st.subheader("📜 Oynanmış Geçmiş Maçlar")
@@ -698,107 +672,40 @@ def group_detail():
             table_data = [{"Oyuncu": get_player_display_name(p), "Gol": p.get("goals", 0), "Asist": p.get("assists", 0)} for p in players_in_match.data]
             st.table(table_data)
 
-            st.write("---")
-            st.subheader("💬 Geçmiş Maç Yorumları ve Medya Paylaşımı")
-            
-            if not is_left:
-                with st.form(key=f"comment_form_{selected_match_id}", clear_on_submit=True):
-                    comment_text = st.text_area("Yorumunuz / Maç Değerlendirmesi", placeholder="Maç hakkında duygu ve düşüncelerinizi yazın...")
-                    media_url = st.text_input("Medya / Görsel Bağlantısı (Opsiyonel)", placeholder="https://...")
-                    submit_comment = st.form_submit_button("💬 Yorum Yap (Enter)")
-                    
-                    if submit_comment:
-                        if comment_text.strip():
-                            try:
-                                supabase.table("match_comments").insert({
-                                    "match_id": selected_match_id,
-                                    "user_id": user_id,
-                                    "comment": comment_text.strip(),
-                                    "media_url": media_url.strip() if media_url else None
-                                }).execute()
-                                st.success("Yorumunuz eklendi!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Yorum eklenirken hata oluştu: {e}")
-                        else:
-                            st.warning("Lütfen bir yorum metni girin.")
-
-            st.write("---")
-            st.markdown("#### 💬 Yapılan Yorumlar")
-            
-            comments_res = supabase.table("match_comments") \
-                .select("id, comment, media_url, created_at, profiles(full_name)") \
-                .eq("match_id", selected_match_id) \
-                .order("created_at", desc=True) \
-                .execute()
-                
-            if comments_res.data:
-                for c in comments_res.data:
-                    author_name = get_profile_name(c.get("profiles"))
-                    st.markdown(f"""
-                    <div class="comment-card">
-                        <strong>👤 {author_name}</strong> <small style='color:#8b949e;'>({c.get('created_at', '')[:10]})</small><br>
-                        {c['comment']}
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    if c.get("media_url"):
-                        st.image(c["media_url"], use_container_width=True)
-            else:
-                st.caption("Bu maç için henüz yorum yapılmamış.")
-        else:
-            st.info("Oynanmış geçmiş bir maç bulunmuyor.")
-
     # =========================================================
-    # TAB: PUAN SIRALAMASI & İSTATİSTİKLER
+    # TAB: PUAN SIRALAMASI
     # =========================================================
     with tab_leaderboard:
         st.subheader("🏆 Grup Puan ve Performans Sıralaması")
-        
         past_match_ids = [m["id"] for m in matches_list if str(m["match_date"]) < today_str]
         
         if past_match_ids:
-            stats_res = supabase.table("match_players") \
-                .select("user_id, custom_name, goals, assists, profiles(full_name)") \
-                .in_("match_id", past_match_ids) \
-                .execute()
-                
+            stats_res = supabase.table("match_players").select("user_id, custom_name, goals, assists, profiles(full_name)").in_("match_id", past_match_ids).execute()
             if stats_res.data:
                 leaderboard = {}
                 for row in stats_res.data:
                     name = get_player_display_name(row)
                     goals = row.get("goals") or 0
                     assists = row.get("assists") or 0
-                    
                     if name not in leaderboard:
                         leaderboard[name] = {"Maç": 0, "Gol": 0, "Asist": 0, "Toplam Skora Katkı": 0}
-                    
                     leaderboard[name]["Maç"] += 1
                     leaderboard[name]["Gol"] += goals
                     leaderboard[name]["Asist"] += assists
                     leaderboard[name]["Toplam Skora Katkı"] += (goals + assists)
                 
-                sorted_leaderboard = sorted(
-                    [{"Oyuncu": k, **v} for k, v in leaderboard.items()],
-                    key=lambda x: x["Toplam Skora Katkı"],
-                    reverse=True
-                )
-                
+                sorted_leaderboard = sorted([{"Oyuncu": k, **v} for k, v in leaderboard.items()], key=lambda x: x["Toplam Skora Katkı"], reverse=True)
                 st.table(sorted_leaderboard)
-            else:
-                st.info("Henüz girilmiş maç istatistiği bulunmuyor.")
-        else:
-            st.info("İstatistik oluşturmak için henüz tamamlanmış bir maç yok.")
 
 # ---------------------------------------------------------
-# Ana Akış Yönlendirmesi (Main Loop)
+# Ana Çalıştırma Bloğu
 # ---------------------------------------------------------
 def main():
+    handle_group_invite()
+    
     if st.session_state.user is None:
         auth_screen()
     else:
-        handle_invite()
-        
         if st.session_state.selected_group is None:
             main_dashboard()
         else:
