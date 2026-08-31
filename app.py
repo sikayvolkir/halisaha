@@ -62,7 +62,7 @@ if st.session_state.user is None:
                     })
                     st.session_state.user = res.user
                     
-                    # Güvenli profil çekme (Hata almamak için)
+                    # Güvenli profil çekme
                     prof = supabase.table("profiles").select("*").eq("id", res.user.id).execute()
                     if prof.data and len(prof.data) > 0:
                         st.session_state.profile = prof.data[0]
@@ -109,7 +109,6 @@ profile = st.session_state.profile or {}
 
 # Sidebar Navigation & User Info
 with st.sidebar:
-    # Safe profile name extraction (AttributeError önleyici)
     user_name = profile.get("full_name", user.email.split("@")[0] if user and user.email else "Oyuncu")
     st.write(f"👋 **Hoş geldin, {user_name}**")
     st.caption(f"📧 {user.email if user else ''}")
@@ -144,8 +143,8 @@ user_groups = [
     {
         "id": item["groups"]["id"],
         "name": item["groups"]["name"],
-        "is_admin": item["is_admin"],
-        "is_left": item["is_left"]
+        "is_admin": item.get("is_admin", False),
+        "is_left": item.get("is_left", False)
     }
     for item in user_groups_res.data if item.get("groups")
 ]
@@ -155,7 +154,6 @@ st.title("⚽ Halısaha Yönetim Paneli")
 # Automatic Group Join Request from URL parameter
 if auto_group_id:
     try:
-        # Check if already a member
         existing_m = supabase.table("group_members").eq("group_id", auto_group_id).eq("user_id", user.id).execute()
         if not existing_m.data:
             st.info(f"🔗 Bağlantı ile bir gruba davet edildiniz (Grup ID: {auto_group_id}).")
@@ -221,27 +219,34 @@ with tab_matches:
         st.info("Bu grupta henüz planlanmış bir maç yok.")
     else:
         for m in matches:
-            m_status = "🟢 Gelecek Maç" if m["status"] == "upcoming" else "🔴 Tamamlandı"
-            with st.expander(f"📅 {m['match_date'][:16].replace('T', ' ')} - {m['location']} ({m_status})", expanded=(m["status"] == "upcoming")):
+            # KeyError Önleyici Safe Getter (.get) Kullanımı
+            status_val = m.get("status", "upcoming")
+            m_status = "🟢 Gelecek Maç" if status_val == "upcoming" else "🔴 Tamamlandı"
+            
+            location_val = m.get("location", "Saha Belirtilmedi")
+            cost_val = m.get("total_cost", 0)
+            date_val = m.get("match_date", "Tarih Yok")[:16].replace("T", " ")
+            
+            with st.expander(f"📅 {date_val} - {location_val} ({m_status})", expanded=(status_val == "upcoming")):
                 
                 col1, col2 = st.columns([1, 1])
                 
                 with col1:
-                    st.write(f"**Konum:** {m['location']}")
-                    st.write(f"**Toplam Ücret:** {m['total_cost']} TL")
+                    st.write(f"**Konum:** {location_val}")
+                    st.write(f"**Toplam Ücret:** {cost_val} TL")
                     st.write(f"**Durum:** {m_status}")
                     
                     # Availability Status
                     att_res = supabase.table("match_attendance").select("status, profiles(full_name)").eq("match_id", m["id"]).execute()
-                    atts = att_res.data
+                    atts = att_res.data if att_res.data else []
                     
-                    coming = [get_profile_name(a.get("profiles")) for a in atts if a["status"] == "coming"]
-                    not_coming = [get_profile_name(a.get("profiles")) for a in atts if a["status"] == "not_coming"]
+                    coming = [get_profile_name(a.get("profiles")) for a in atts if a.get("status") == "coming"]
+                    not_coming = [get_profile_name(a.get("profiles")) for a in atts if a.get("status") == "not_coming"]
                     
                     st.write(f"✅ **Geliyor ({len(coming)}):** {', '.join(coming) if coming else 'Henüz kimse yok'}")
                     st.write(f"❌ **Gelmiyor ({len(not_coming)}):** {', '.join(not_coming) if not_coming else 'Henüz kimse yok'}")
 
-                    if m["status"] == "upcoming" and not is_left:
+                    if status_val == "upcoming" and not is_left:
                         st.write("---")
                         st.write("**Katılım Durumunu Güncelle:**")
                         c_btn1, c_btn2 = st.columns(2)
@@ -263,10 +268,10 @@ with tab_matches:
                 with col2:
                     st.subheader("📋 Kadro & Takımlar")
                     squad_res = supabase.table("match_squads").select("team, profiles(full_name)").eq("match_id", m["id"]).execute()
-                    squad = squad_res.data
+                    squad = squad_res.data if squad_res.data else []
                     
-                    team_a = [get_profile_name(s.get("profiles")) for s in squad if s["team"] == "A"]
-                    team_b = [get_profile_name(s.get("profiles")) for s in squad if s["team"] == "B"]
+                    team_a = [get_profile_name(s.get("profiles")) for s in squad if s.get("team") == "A"]
+                    team_b = [get_profile_name(s.get("profiles")) for s in squad if s.get("team") == "B"]
                     
                     sq_col1, sq_col2 = st.columns(2)
                     with sq_col1:
@@ -278,12 +283,11 @@ with tab_matches:
                         for p in team_b:
                             st.write(f"- {p}")
 
-                    if group["is_admin"] and m["status"] == "upcoming" and not is_left:
+                    if group["is_admin"] and status_val == "upcoming" and not is_left:
                         st.write("---")
                         st.write("**⚙️ Otomatik Kadro Kur (Admin):**")
                         if st.button("🎲 Gelenlerden Dengeli Kadro Yap", key=f"squad_btn_{m['id']}"):
-                            coming_users = [a["profiles"]["full_name"] for a in atts if a["status"] == "coming" and a.get("profiles")]
-                            coming_ids = [a["user_id"] for a in atts if a["status"] == "coming"]
+                            coming_ids = [a["user_id"] for a in atts if a.get("status") == "coming"]
                             
                             if len(coming_ids) < 2:
                                 st.warning("Kadro kurmak için en az 2 kişi 'Geliyorum' demelidir.")
@@ -317,7 +321,7 @@ with tab_ratings:
     if ratings_res.data:
         df_ratings = pd.DataFrame(ratings_res.data)
         profiles_res = supabase.table("profiles").select("id, full_name").execute()
-        prof_map = {p["id"]: p["full_name"] for p in profiles_res.data}
+        prof_map = {p["id"]: p.get("full_name", "Bilinmeyen") for p in (profiles_res.data or [])}
         
         df_ratings["Oyuncu"] = df_ratings["rated_user_id"].map(prof_map)
         avg_ratings = df_ratings.groupby("Oyuncu")["score"].agg(["mean", "count"]).reset_index()
@@ -331,7 +335,7 @@ with tab_ratings:
     st.divider()
     st.write("### 📝 Oy Kullan")
     all_members = supabase.table("group_members").select("user_id, profiles(full_name)").eq("group_id", group["id"]).execute()
-    member_options = {get_profile_name(m.get("profiles")): m["user_id"] for m in all_members.data if m.get("user_id") != user.id}
+    member_options = {get_profile_name(m.get("profiles")): m["user_id"] for m in (all_members.data or []) if m.get("user_id") != user.id}
     
     if member_options:
         selected_player = st.selectbox("Değerlendirilecek Oyuncu", list(member_options.keys()))
@@ -356,7 +360,7 @@ with tab_ratings:
 with tab_members:
     st.subheader("📲 Gruba Davet Linki & WhatsApp Paylaşımı")
     
-    # Live Application Public URL (Kendi canlı URL adresinizle güncelleyebilirsiniz)
+    # Live Application Public URL
     app_base_url = "https://halisaha-takip.streamlit.app"
     invite_link = f"{app_base_url}/?group_id={group['id']}"
     
@@ -405,10 +409,10 @@ with tab_members:
     st.subheader("👥 Grup Üyeleri")
     members = supabase.table("group_members").select("is_admin, is_left, profiles(full_name)").eq("group_id", group["id"]).execute()
     
-    for m in members.data:
+    for m in (members.data or []):
         name = get_profile_name(m.get("profiles"))
         status = " (Ayrıldı)" if m.get("is_left") else ""
-        role = "⭐ Admin" if m["is_admin"] else "🏃 Oyuncu"
+        role = "⭐ Admin" if m.get("is_admin") else "🏃 Oyuncu"
         st.write(f"- **{name}** ({role}){status}")
         
     # Pending Join Requests (Admin Only)
