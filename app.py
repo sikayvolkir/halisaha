@@ -62,7 +62,6 @@ if st.session_state.user is None:
                     })
                     st.session_state.user = res.user
                     
-                    # Güvenli profil çekme
                     prof = supabase.table("profiles").select("*").eq("id", res.user.id).execute()
                     if prof.data and len(prof.data) > 0:
                         st.session_state.profile = prof.data[0]
@@ -125,10 +124,8 @@ with st.sidebar:
     if st.button("Grup Oluştur"):
         if new_group_name.strip():
             try:
-                # 1. Create group
                 g_res = supabase.table("groups").insert({"name": new_group_name.strip(), "created_by": user.id}).execute()
                 created_group_id = g_res.data[0]["id"]
-                # 2. Add creator as admin member
                 supabase.table("group_members").insert({"group_id": created_group_id, "user_id": user.id, "is_admin": True}).execute()
                 st.success(f"'{new_group_name}' grubu oluşturuldu!")
                 st.rerun()
@@ -183,6 +180,10 @@ st.divider()
 # Navigation Tabs
 tab_matches, tab_ratings, tab_members = st.tabs(["🏟️ Maçlar & Kadrolar", "⭐ Oyuncu Reytingleri", "👥 Grup Üyeleri & Davet"])
 
+# Profiles Cache Helper
+profiles_list = supabase.table("profiles").select("id, full_name").execute().data or []
+profile_map = {p["id"]: p.get("full_name", "Bilinmeyen Oyuncu") for p in profiles_list}
+
 # =========================================================
 # TAB: MAÇLAR & KADROLAR
 # =========================================================
@@ -219,7 +220,6 @@ with tab_matches:
         st.info("Bu grupta henüz planlanmış bir maç yok.")
     else:
         for m in matches:
-            # KeyError Önleyici Safe Getter (.get) Kullanımı
             status_val = m.get("status", "upcoming")
             m_status = "🟢 Gelecek Maç" if status_val == "upcoming" else "🔴 Tamamlandı"
             
@@ -236,12 +236,12 @@ with tab_matches:
                     st.write(f"**Toplam Ücret:** {cost_val} TL")
                     st.write(f"**Durum:** {m_status}")
                     
-                    # Availability Status
-                    att_res = supabase.table("match_attendance").select("status, profiles(full_name)").eq("match_id", m["id"]).execute()
+                    # Safe Attendance Query (Foreign key olmasa dahi hatasız çalışır)
+                    att_res = supabase.table("match_attendance").select("user_id, status").eq("match_id", m["id"]).execute()
                     atts = att_res.data if att_res.data else []
                     
-                    coming = [get_profile_name(a.get("profiles")) for a in atts if a.get("status") == "coming"]
-                    not_coming = [get_profile_name(a.get("profiles")) for a in atts if a.get("status") == "not_coming"]
+                    coming = [profile_map.get(a["user_id"], "Bilinmeyen Oyuncu") for a in atts if a.get("status") == "coming"]
+                    not_coming = [profile_map.get(a["user_id"], "Bilinmeyen Oyuncu") for a in atts if a.get("status") == "not_coming"]
                     
                     st.write(f"✅ **Geliyor ({len(coming)}):** {', '.join(coming) if coming else 'Henüz kimse yok'}")
                     st.write(f"❌ **Gelmiyor ({len(not_coming)}):** {', '.join(not_coming) if not_coming else 'Henüz kimse yok'}")
@@ -267,11 +267,11 @@ with tab_matches:
 
                 with col2:
                     st.subheader("📋 Kadro & Takımlar")
-                    squad_res = supabase.table("match_squads").select("team, profiles(full_name)").eq("match_id", m["id"]).execute()
+                    squad_res = supabase.table("match_squads").select("user_id, team").eq("match_id", m["id"]).execute()
                     squad = squad_res.data if squad_res.data else []
                     
-                    team_a = [get_profile_name(s.get("profiles")) for s in squad if s.get("team") == "A"]
-                    team_b = [get_profile_name(s.get("profiles")) for s in squad if s.get("team") == "B"]
+                    team_a = [profile_map.get(s["user_id"], "Bilinmeyen Oyuncu") for s in squad if s.get("team") == "A"]
+                    team_b = [profile_map.get(s["user_id"], "Bilinmeyen Oyuncu") for s in squad if s.get("team") == "B"]
                     
                     sq_col1, sq_col2 = st.columns(2)
                     with sq_col1:
@@ -320,10 +320,7 @@ with tab_ratings:
     ratings_res = supabase.table("ratings").select("rated_user_id, score").execute()
     if ratings_res.data:
         df_ratings = pd.DataFrame(ratings_res.data)
-        profiles_res = supabase.table("profiles").select("id, full_name").execute()
-        prof_map = {p["id"]: p.get("full_name", "Bilinmeyen") for p in (profiles_res.data or [])}
-        
-        df_ratings["Oyuncu"] = df_ratings["rated_user_id"].map(prof_map)
+        df_ratings["Oyuncu"] = df_ratings["rated_user_id"].map(profile_map)
         avg_ratings = df_ratings.groupby("Oyuncu")["score"].agg(["mean", "count"]).reset_index()
         avg_ratings.columns = ["Oyuncu Adı", "Ortalama Puan", "Oy Sayısı"]
         avg_ratings["Ortalama Puan"] = avg_ratings["Ortalama Puan"].round(2)
@@ -334,8 +331,8 @@ with tab_ratings:
 
     st.divider()
     st.write("### 📝 Oy Kullan")
-    all_members = supabase.table("group_members").select("user_id, profiles(full_name)").eq("group_id", group["id"]).execute()
-    member_options = {get_profile_name(m.get("profiles")): m["user_id"] for m in (all_members.data or []) if m.get("user_id") != user.id}
+    all_members = supabase.table("group_members").select("user_id").eq("group_id", group["id"]).execute()
+    member_options = {profile_map.get(m["user_id"], "Bilinmeyen"): m["user_id"] for m in (all_members.data or []) if m.get("user_id") != user.id}
     
     if member_options:
         selected_player = st.selectbox("Değerlendirilecek Oyuncu", list(member_options.keys()))
@@ -360,18 +357,14 @@ with tab_ratings:
 with tab_members:
     st.subheader("📲 Gruba Davet Linki & WhatsApp Paylaşımı")
     
-    # Live Application Public URL
     app_base_url = "https://halisaha-takip.streamlit.app"
     invite_link = f"{app_base_url}/?group_id={group['id']}"
     
-    # WhatsApp Pre-filled Message Text
     share_text = f"⚽ *{group['name']}* halısaha grubuna davet edildin!\n\nAşağıdaki bağlantıya tıklayarak gruba katılabilir ve maç kadrolarını takip edebilirsin:\n{invite_link}"
     
-    # URL Encoding for WhatsApp Web/App
     encoded_text = urllib.parse.quote(share_text)
     whatsapp_url = f"https://api.whatsapp.com/send?text={encoded_text}"
     
-    # Layout UI for Share Button
     c_link, c_wa = st.columns([2, 1])
     
     with c_link:
@@ -407,10 +400,10 @@ with tab_members:
 
     # List Group Members
     st.subheader("👥 Grup Üyeleri")
-    members = supabase.table("group_members").select("is_admin, is_left, profiles(full_name)").eq("group_id", group["id"]).execute()
+    members = supabase.table("group_members").select("user_id, is_admin, is_left").eq("group_id", group["id"]).execute()
     
     for m in (members.data or []):
-        name = get_profile_name(m.get("profiles"))
+        name = profile_map.get(m["user_id"], "Bilinmeyen Oyuncu")
         status = " (Ayrıldı)" if m.get("is_left") else ""
         role = "⭐ Admin" if m.get("is_admin") else "🏃 Oyuncu"
         st.write(f"- **{name}** ({role}){status}")
@@ -419,11 +412,11 @@ with tab_members:
     if group["is_admin"] and not is_left:
         st.divider()
         st.subheader("🔔 Bekleyen Katılım İstekleri")
-        requests = supabase.table("group_join_requests").select("id, user_id, profiles(full_name)").eq("group_id", group["id"]).eq("status", "pending").execute()
+        requests = supabase.table("group_join_requests").select("id, user_id").eq("group_id", group["id"]).eq("status", "pending").execute()
         
         if requests.data:
             for req in requests.data:
-                u_name = get_profile_name(req.get("profiles"))
+                u_name = profile_map.get(req["user_id"], "Bilinmeyen Kullanıcı")
                 col_req_1, col_req_2, col_req_3 = st.columns([2, 1, 1])
                 col_req_1.write(f"**{u_name}** gruba katılmak istiyor.")
                 
