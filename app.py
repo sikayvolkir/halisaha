@@ -741,7 +741,6 @@ def group_detail():
                                 "together_pairs": together_pairs,
                                 "separate_pairs": separate_pairs
                             }
-                            # Safe insert/update logic for match_squad_drafts
                             existing_draft = supabase.table("match_squad_drafts").select("id").eq("match_id", m_id).eq("user_id", user_id).execute()
                             if existing_draft.data:
                                 supabase.table("match_squad_drafts").update(data).eq("id", existing_draft.data[0]["id"]).execute()
@@ -933,9 +932,11 @@ def group_detail():
                 with st.form(key=f"motm_form_{selected_match_id}"):
                     current_voted_player_name = None
                     if my_vote:
-                        voted_p_obj = next((p for p in players_in_match if p.get("id") == my_vote.get("voted_player_id") or (p.get("user_id") and p.get("user_id") == my_vote.get("voted_player_id"))), None)
+                        voted_p_obj = next((p for p in players_in_match if p.get("id") == my_vote.get("voted_player_id") or (p.get("user_id") and str(p.get("user_id")) == str(my_vote.get("voted_player_id")))), None)
                         if voted_p_obj:
                             current_voted_player_name = get_player_display_name(voted_p_obj)
+                        elif my_vote.get("voted_player_name"):
+                            current_voted_player_name = my_vote.get("voted_player_name")
                     
                     default_idx = 0
                     opt_keys = list(vote_options.keys())
@@ -949,8 +950,6 @@ def group_detail():
                         target_p = vote_options[sel_voted_name]
                         target_id = target_p.get("user_id") if target_p.get("user_id") else target_p.get("id")
                         
-                        existing_vote = supabase.table("match_motm_votes").select("id").eq("match_id", selected_match_id).eq("user_id", user_id).execute()
-                        
                         vote_data = {
                             "match_id": selected_match_id,
                             "user_id": user_id,
@@ -958,17 +957,16 @@ def group_detail():
                             "voted_player_name": sel_voted_name
                         }
                         
-                        if existing_vote.data and len(existing_vote.data) > 0:
-                            vote_id = existing_vote.data[0]["id"]
-                            supabase.table("match_motm_votes").update({
-                                "voted_player_id": str(target_id),
-                                "voted_player_name": sel_voted_name
-                            }).eq("id", vote_id).execute()
-                        else:
-                            supabase.table("match_motm_votes").insert(vote_data).execute()
+                        try:
+                            supabase.table("match_motm_votes").upsert(
+                                vote_data, 
+                                on_conflict="match_id,user_id"
+                            ).execute()
                             
-                        st.success("Oyunuz kaydedildi!")
-                        st.rerun()
+                            st.success("Oyunuz başarıyla kaydedildi!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Oy kaydedilirken hata oluştu: {e}")
 
             vote_counts = {}
             for v in all_votes:
