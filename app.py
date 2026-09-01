@@ -185,7 +185,7 @@ def render_match_chat(match_id, user_id, group_id, is_left):
                         """, unsafe_allow_html=True)
                         if msg.get("media_url"):
                             if msg.get("media_type") == "image":
-                                st.image(msg["media_url"], use_column_width=True)
+                                st.image(msg["media_url"], use_container_width=True)
                             elif msg.get("media_type") == "video":
                                 st.video(msg["media_url"])
                     with nc2:
@@ -201,7 +201,7 @@ def render_match_chat(match_id, user_id, group_id, is_left):
                     """, unsafe_allow_html=True)
                     if msg.get("media_url"):
                         if msg.get("media_type") == "image":
-                            st.image(msg["media_url"], use_column_width=True)
+                            st.image(msg["media_url"], use_container_width=True)
                         elif msg.get("media_type") == "video":
                             st.video(msg["media_url"])
         else:
