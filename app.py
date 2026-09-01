@@ -172,19 +172,38 @@ def render_match_chat(match_id, user_id, group_id, is_left):
                 msg_uid = msg.get("user_id")
                 author = profiles_map.get(msg_uid) or get_profile_name(msg.get("profiles"))
                 time_str = msg.get("created_at", "")[:16].replace("T", " ")
+                is_my_message = (msg_uid == user_id)
                 
-                st.markdown(f"""
-                <div class="chat-bubble">
-                    <span class="chat-user">{author}</span> <span class="chat-time">{time_str}</span><br/>
-                    <div style="margin-top:5px;">{msg.get('message') or ''}</div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                if msg.get("media_url"):
-                    if msg.get("media_type") == "image":
-                        st.image(msg["media_url"], use_column_width=True)
-                    elif msg.get("media_type") == "video":
-                        st.video(msg["media_url"])
+                if is_my_message:
+                    nc1, nc2 = st.columns([5, 1])
+                    with nc1:
+                        st.markdown(f"""
+                        <div class="chat-bubble">
+                            <span class="chat-user">{author}</span> <span class="chat-time">{time_str}</span><br/>
+                            <div style="margin-top:5px;">{msg.get('message') or ''}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        if msg.get("media_url"):
+                            if msg.get("media_type") == "image":
+                                st.image(msg["media_url"], use_column_width=True)
+                            elif msg.get("media_type") == "video":
+                                st.video(msg["media_url"])
+                    with nc2:
+                        if st.button("❌", key=f"del_msg_{msg['id']}"):
+                            supabase.table("match_messages").delete().eq("id", msg["id"]).execute()
+                            st.rerun()
+                else:
+                    st.markdown(f"""
+                    <div class="chat-bubble">
+                        <span class="chat-user">{author}</span> <span class="chat-time">{time_str}</span><br/>
+                        <div style="margin-top:5px;">{msg.get('message') or ''}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if msg.get("media_url"):
+                        if msg.get("media_type") == "image":
+                            st.image(msg["media_url"], use_column_width=True)
+                        elif msg.get("media_type") == "video":
+                            st.video(msg["media_url"])
         else:
             st.caption("Henüz mesaj yok. İlk mesajı sen yaz!")
 
