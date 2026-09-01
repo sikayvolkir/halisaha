@@ -294,11 +294,14 @@ def main_dashboard():
         st.subheader("Dahil Olduğunuz Gruplar")
         memberships = supabase.table("group_members").select("group_id, is_admin, is_left, groups(id, name)").eq("user_id", user_id).execute()
         
+        my_group_ids = []
         if memberships.data:
             for item in memberships.data:
                 group = item.get("groups")
                 if not group:
                     continue
+                
+                my_group_ids.append(group["id"])
                 is_admin = item["is_admin"]
                 is_left = item.get("is_left", False)
                 
@@ -330,6 +333,51 @@ def main_dashboard():
                 st.divider()
         else:
             st.info("Henüz herhangi bir gruba dahil değilsiniz.")
+
+        # =========================================================
+        # GÜNCELLEME: GRUP ARAMA VE İSTEK GÖNDERME BÖLÜMÜ
+        # =========================================================
+        st.subheader("🔍 Grup Ara & Katıl")
+        search_query = st.text_input("Grup Adı Ara", placeholder="Aramak istediğiniz grubun adını yazın...", key="search_group_input")
+        
+        if search_query.strip():
+            # Tüm grupları çek
+            search_res = supabase.table("groups").select("id, name").ilike("name", f"%{search_query.strip()}%").execute()
+            
+            if search_res.data:
+                # Kullanıcının mevcut tüm grup isteklerini çek
+                user_requests = supabase.table("group_join_requests").select("group_id, status").eq("user_id", user_id).execute()
+                pending_group_ids = [r["group_id"] for r in user_requests.data if r.get("status") == "pending"]
+
+                found_any = False
+                for g in search_res.data:
+                    # Kullanıcının zaten üyesi olduğu grupları arama sonuçlarında filtrele
+                    if g["id"] in my_group_ids:
+                        continue
+                    
+                    found_any = True
+                    g_col1, g_col2 = st.columns([3, 1])
+                    g_col1.write(f"⚽ **{g['name']}**")
+                    
+                    # Kullanıcı zaten istek attıysa göster
+                    if g["id"] in pending_group_ids:
+                        g_col2.button("⏳ İstek Beklemede", key=f"req_pend_{g['id']}", disabled=True)
+                    else:
+                        if g_col2.button("➕ İstek Gönder", key=f"req_send_{g['id']}"):
+                            try:
+                                supabase.table("group_join_requests").insert({
+                                    "group_id": g["id"],
+                                    "user_id": user_id,
+                                    "status": "pending"
+                                }).execute()
+                                st.success(f"'{g['name']}' grubuna katılım isteğiniz gönderildi!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"İstek gönderilemedi: {e}")
+                if not found_any:
+                    st.caption("Aramanıza uygun katılabileceğiniz yeni bir grup bulunamadı.")
+            else:
+                st.caption("Eşleşen grup bulunamadı.")
 
     with col2:
         st.subheader("Yeni Grup Oluştur")
@@ -660,7 +708,7 @@ def group_detail():
     # =========================================================
     with tab_members:
         st.subheader("🔗 Gruba Davet Linki")
-        base_url = "https://halisaha-takip.streamlit.app"  # Kendi yayın adresinize göre güncelleyebilirsiniz
+        base_url = "https://halisaha-takip.streamlit.app"
         invite_link = f"{base_url}/?group_id={group['id']}"
         st.code(invite_link, language="text")
         st.caption("Bu linki paylaştığınızda; kullanıcı oturum açmışsa onay ekranı gelir, oturumu yoksa giriş yaptıktan sonra onay ekranı açılır.")
@@ -754,15 +802,10 @@ def group_detail():
 # UYGULAMA YÖNLENDİRME MERKEZİ (ROUTING)
 # ---------------------------------------------------------
 def main():
-    # 1. Kullanıcı Giriş Yapmamışsa -> Giriş/Kayıt Ekranı
     if st.session_state.user is None:
         auth_screen()
-        
-    # 2. Kullanıcı Giriş Yapmış VE Davet Linkiyle Gelmişse -> Davet Onay Ekranı
     elif st.session_state.pending_group_id is not None:
         render_invite_confirmation_screen()
-        
-    # 3. Standart Akış -> Gruplarım veya Seçili Grup Detayı
     else:
         if st.session_state.selected_group is None:
             main_dashboard()
