@@ -241,12 +241,34 @@ def render_match_chat(match_id, user_id, group_id, is_left):
     st.markdown("---")
     st.write("### 💬 Maç Sohbeti & Medya Paylaşımı")
     
-    msg_res = supabase.table("match_messages").select("*, profiles(full_name)").eq("match_id", match_id).order("created_at", desc=False).execute()
+    # PostgREST ilişki hatasını önlemek için güvenli select sorgusu
+    try:
+        msg_res = (
+            supabase.table("match_messages")
+            .select("*, profiles:user_id(full_name)")
+            .eq("match_id", match_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        messages_data = msg_res.data if msg_res.data else []
+    except Exception:
+        try:
+            # Alternatif düz sorgu
+            msg_res = (
+                supabase.table("match_messages")
+                .select("*")
+                .eq("match_id", match_id)
+                .order("created_at", desc=False)
+                .execute()
+            )
+            messages_data = msg_res.data if msg_res.data else []
+        except Exception:
+            messages_data = []
     
     chat_container = st.container()
     with chat_container:
-        if msg_res.data:
-            for msg in msg_res.data:
+        if messages_data:
+            for msg in messages_data:
                 author = get_profile_name(msg.get("profiles"))
                 time_str = msg.get("created_at", "")[:16].replace("T", " ")
                 
@@ -304,7 +326,7 @@ def render_match_chat(match_id, user_id, group_id, is_left):
                     st.rerun()
 
 # ---------------------------------------------------------
-# GRUP DAVET ONAY EKRANI (Giriş Yapmış Kullanıcılar İçin)
+# GRUP DAVET ONAY EKRANI
 # ---------------------------------------------------------
 def render_invite_confirmation_screen():
     render_top_bar()
@@ -381,7 +403,7 @@ def render_invite_confirmation_screen():
             st.rerun()
 
 # ---------------------------------------------------------
-# Kimlik Doğrulama Ekranı (Giriş Yapılmamışsa)
+# Kimlik Doğrulama Ekranı
 # ---------------------------------------------------------
 def auth_screen():
     st.markdown("<h1 class='main-title'>⚽ HALISAHA TAKİP SİSTEMİ</h1>", unsafe_allow_html=True)
@@ -660,12 +682,27 @@ def group_detail():
                 with col_join_btn:
                     if user_id in player_uids:
                         if st.button("❌ Maçtan Çık", key=f"btn_leave_m_{m_id}", use_container_width=True):
+                            # 1. Veritabanından (match_players) Oyuncuyu Sil
                             supabase.table("match_players").delete().eq("match_id", m_id).eq("user_id", user_id).execute()
                             
+                            # 2. Oyuncunun İsmini Bul
+                            current_user_name = None
                             user_prof = supabase.table("profiles").select("full_name").eq("id", user_id).execute()
-                            u_name = get_profile_name(user_prof.data[0]) if user_prof.data else "Bir üye"
+                            if user_prof.data and user_prof.data[0].get("full_name"):
+                                current_user_name = user_prof.data[0]["full_name"]
+
+                            # 3. Session State Üzerindeki Geçici Kadro/Takım Seçimlerinden Temizle
+                            if current_user_name:
+                                if "current_team_a" in st.session_state and current_user_name in st.session_state.current_team_a:
+                                    st.session_state.current_team_a.remove(current_user_name)
+                                if "current_team_b" in st.session_state and current_user_name in st.session_state.current_team_b:
+                                    st.session_state.current_team_b.remove(current_user_name)
+
+                            # 4. Bildirim Gönder
+                            u_name = current_user_name if current_user_name else "Bir üye"
                             create_notification_for_group(group["id"], "🏃‍♂️ Maç Katılımı", f"{u_name} maç kadrosundan ayrıldı.", exclude_user_id=user_id)
                             
+                            # 5. Sayfayı Yenile
                             st.rerun()
                     else:
                         if st.button("✅ Maça Katıl", key=f"btn_join_m_{m_id}", use_container_width=True):
