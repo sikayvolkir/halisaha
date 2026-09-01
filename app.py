@@ -741,7 +741,12 @@ def group_detail():
                                 "together_pairs": together_pairs,
                                 "separate_pairs": separate_pairs
                             }
-                            supabase.table("match_squad_drafts").upsert(data, on_conflict="match_id,user_id").execute()
+                            # Safe insert/update logic for match_squad_drafts
+                            existing_draft = supabase.table("match_squad_drafts").select("id").eq("match_id", m_id).eq("user_id", user_id).execute()
+                            if existing_draft.data:
+                                supabase.table("match_squad_drafts").update(data).eq("id", existing_draft.data[0]["id"]).execute()
+                            else:
+                                supabase.table("match_squad_drafts").insert(data).execute()
                             st.success("Taslağınız kaydedildi!")
                     
                     with send_col:
@@ -757,7 +762,11 @@ def group_detail():
                                 "separate_pairs": separate_pairs,
                                 "is_approved": is_appr
                             }
-                            supabase.table("match_squad_drafts").upsert(data, on_conflict="match_id,user_id").execute()
+                            existing_draft = supabase.table("match_squad_drafts").select("id").eq("match_id", m_id).eq("user_id", user_id).execute()
+                            if existing_draft.data:
+                                supabase.table("match_squad_drafts").update(data).eq("id", existing_draft.data[0]["id"]).execute()
+                            else:
+                                supabase.table("match_squad_drafts").insert(data).execute()
                             
                             user_prof = supabase.table("profiles").select("full_name").eq("id", user_id).execute()
                             u_name = get_profile_name(user_prof.data[0]) if user_prof.data else "Bir üye"
@@ -940,6 +949,8 @@ def group_detail():
                         target_p = vote_options[sel_voted_name]
                         target_id = target_p.get("user_id") if target_p.get("user_id") else target_p.get("id")
                         
+                        existing_vote = supabase.table("match_motm_votes").select("id").eq("match_id", selected_match_id).eq("user_id", user_id).execute()
+                        
                         vote_data = {
                             "match_id": selected_match_id,
                             "user_id": user_id,
@@ -947,8 +958,15 @@ def group_detail():
                             "voted_player_name": sel_voted_name
                         }
                         
-                        # Hata almamak için on_conflict parametresi sadeleştirildi
-                        supabase.table("match_motm_votes").upsert(vote_data, on_conflict="match_id,user_id").execute()
+                        if existing_vote.data and len(existing_vote.data) > 0:
+                            vote_id = existing_vote.data[0]["id"]
+                            supabase.table("match_motm_votes").update({
+                                "voted_player_id": str(target_id),
+                                "voted_player_name": sel_voted_name
+                            }).eq("id", vote_id).execute()
+                        else:
+                            supabase.table("match_motm_votes").insert(vote_data).execute()
+                            
                         st.success("Oyunuz kaydedildi!")
                         st.rerun()
 
