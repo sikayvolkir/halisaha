@@ -741,7 +741,7 @@ def group_detail():
                                 "together_pairs": together_pairs,
                                 "separate_pairs": separate_pairs
                             }
-                            supabase.table("match_squad_drafts").upsert(data, on_conflict="match_id, user_id").execute()
+                            supabase.table("match_squad_drafts").upsert(data, on_conflict="match_id,user_id").execute()
                             st.success("Taslağınız kaydedildi!")
                     
                     with send_col:
@@ -757,7 +757,7 @@ def group_detail():
                                 "separate_pairs": separate_pairs,
                                 "is_approved": is_appr
                             }
-                            supabase.table("match_squad_drafts").upsert(data, on_conflict="match_id, user_id").execute()
+                            supabase.table("match_squad_drafts").upsert(data, on_conflict="match_id,user_id").execute()
                             
                             user_prof = supabase.table("profiles").select("full_name").eq("id", user_id).execute()
                             u_name = get_profile_name(user_prof.data[0]) if user_prof.data else "Bir üye"
@@ -946,7 +946,8 @@ def group_detail():
                             "voted_player_id": str(target_id),
                             "voted_player_name": sel_voted_name
                         }
-                        # On_conflict parametresi tablo kısıtına göre düzenlendi
+                        
+                        # Hata almamak için on_conflict parametresi sadeleştirildi
                         supabase.table("match_motm_votes").upsert(vote_data, on_conflict="match_id,user_id").execute()
                         st.success("Oyunuz kaydedildi!")
                         st.rerun()
