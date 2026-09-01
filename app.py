@@ -943,10 +943,11 @@ def group_detail():
                         vote_data = {
                             "match_id": selected_match_id,
                             "user_id": user_id,
-                            "voted_player_id": target_id,
+                            "voted_player_id": str(target_id),
                             "voted_player_name": sel_voted_name
                         }
-                        supabase.table("match_motm_votes").upsert(vote_data, on_conflict="match_id, user_id").execute()
+                        # On_conflict parametresi tablo kısıtına göre düzenlendi
+                        supabase.table("match_motm_votes").upsert(vote_data, on_conflict="match_id,user_id").execute()
                         st.success("Oyunuz kaydedildi!")
                         st.rerun()
 
@@ -959,7 +960,7 @@ def group_detail():
             if vote_counts:
                 st.caption("📊 Anlık Oy Dağılımı:")
                 for pn, count in sorted(vote_counts.items(), key=lambda x: x[1], reverse=True):
-                    st.write(- f"**{pn}**: {count} oy")
+                    st.write(f"- **{pn}**: {count} oy")
 
             render_match_chat(selected_match_id, user_id, group["id"], is_left)
         else:
@@ -995,7 +996,7 @@ def group_detail():
                     goals = row.get("goals") or 0
                     assists = row.get("assists") or 0
                     
-                    motm_total = motm_counts.get(name, 0) + motm_counts.get(u_id, 0) + motm_counts.get(p_id, 0)
+                    motm_total = motm_counts.get(name, 0) + motm_counts.get(str(u_id), 0) + motm_counts.get(str(p_id), 0)
                     
                     if name not in leaderboard:
                         leaderboard[name] = {
