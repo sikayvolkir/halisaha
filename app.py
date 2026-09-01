@@ -136,11 +136,9 @@ if "together_count" not in st.session_state:
 if "separate_count" not in st.session_state:
     st.session_state.separate_count = 1
 
-# URL Query Parametresinden Davet ID'sini Sakla
 if "group_id" in st.query_params:
     st.session_state.pending_group_id = st.query_params["group_id"]
 
-# Oturum Açık mı Kontrol Et
 try:
     session = supabase.auth.get_session()
     if session and session.user:
@@ -241,7 +239,6 @@ def render_match_chat(match_id, user_id, group_id, is_left):
     st.markdown("---")
     st.write("### 💬 Maç Sohbeti & Medya Paylaşımı")
     
-    # PostgREST ilişki hatasını önlemek için güvenli select sorgusu
     try:
         msg_res = (
             supabase.table("match_messages")
@@ -253,7 +250,6 @@ def render_match_chat(match_id, user_id, group_id, is_left):
         messages_data = msg_res.data if msg_res.data else []
     except Exception:
         try:
-            # Alternatif düz sorgu
             msg_res = (
                 supabase.table("match_messages")
                 .select("*")
@@ -675,34 +671,55 @@ def group_detail():
             if not player_names:
                 player_names = ["Oyuncu Bulunamadı"]
 
-            # MAÇA KATIL / AYRIL BUTONU
+            # MAÇA KATIL / AYRIL BUTONU BÖLÜMÜ (GÜNCELLENDİ)
             if not is_left:
                 st.markdown("#### 🏃‍♂️ Maç Katılım Durumunuz")
                 col_join_btn, col_join_info = st.columns([1, 3])
                 with col_join_btn:
                     if user_id in player_uids:
                         if st.button("❌ Maçtan Çık", key=f"btn_leave_m_{m_id}", use_container_width=True):
-                            # 1. Veritabanından (match_players) Oyuncuyu Sil
-                            supabase.table("match_players").delete().eq("match_id", m_id).eq("user_id", user_id).execute()
-                            
-                            # 2. Oyuncunun İsmini Bul
+                            # 1. Oyuncu adını al
                             current_user_name = None
                             user_prof = supabase.table("profiles").select("full_name").eq("id", user_id).execute()
                             if user_prof.data and user_prof.data[0].get("full_name"):
                                 current_user_name = user_prof.data[0]["full_name"]
 
-                            # 3. Session State Üzerindeki Geçici Kadro/Takım Seçimlerinden Temizle
+                            # 2. Veritabanından (match_players) Oyuncuyu Sil
+                            supabase.table("match_players").delete().eq("match_id", m_id).eq("user_id", user_id).execute()
+                            
+                            # 3. Veritabanındaki TÜM kadro taslaklarından (match_squad_drafts) bu kişiyi temizle
+                            if current_user_name:
+                                all_drafts = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).execute()
+                                if all_drafts.data:
+                                    for d in all_drafts.data:
+                                        t_a = [p for p in d.get("team_a", []) if p != current_user_name]
+                                        t_b = [p for p in d.get("team_b", []) if p != current_user_name]
+                                        supabase.table("match_squad_drafts").update({
+                                            "team_a": t_a,
+                                            "team_b": t_b
+                                        }).eq("id", d["id"]).execute()
+
+                            # 4. Eğer Onaylanmış Resmi Kadro Varsa İptal Et ve Admine Bildirim Gönder
+                            approved_draft = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).eq("is_approved", True).execute()
+                            was_approved = len(approved_draft.data) > 0
+
+                            if was_approved:
+                                supabase.table("match_squad_drafts").update({"is_approved": False}).eq("match_id", m_id).execute()
+
+                            # 5. Session State Üzerindeki Geçici Kadro Seçimlerinden Temizle
                             if current_user_name:
                                 if "current_team_a" in st.session_state and current_user_name in st.session_state.current_team_a:
                                     st.session_state.current_team_a.remove(current_user_name)
                                 if "current_team_b" in st.session_state and current_user_name in st.session_state.current_team_b:
                                     st.session_state.current_team_b.remove(current_user_name)
 
-                            # 4. Bildirim Gönder
+                            # 6. Bildirim Gönderimi
                             u_name = current_user_name if current_user_name else "Bir üye"
                             create_notification_for_group(group["id"], "🏃‍♂️ Maç Katılımı", f"{u_name} maç kadrosundan ayrıldı.", exclude_user_id=user_id)
                             
-                            # 5. Sayfayı Yenile
+                            if was_approved:
+                                create_notification_for_group(group["id"], "⚠️ Onaylı Kadro Bozuldu", f"{u_name} maçtan ayrıldığı için onaylanmış kadro iptal edildi. Adminin tekrar onaylaması gerekiyor.", admin_only=True)
+
                             st.rerun()
                     else:
                         if st.button("✅ Maça Katıl", key=f"btn_join_m_{m_id}", use_container_width=True):
