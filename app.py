@@ -2,6 +2,7 @@ import streamlit as st
 from supabase import create_client, Client
 import random
 from datetime import date
+import uuid
 
 # ---------------------------------------------------------
 # Sayfa Konfigürasyonu & Tema
@@ -38,6 +39,23 @@ st.markdown("""
         padding: 10px 15px;
         margin-bottom: 10px;
         border-radius: 4px;
+    }
+    .chat-bubble {
+        background-color: #161b22;
+        border-left: 4px solid #238636;
+        padding: 10px 14px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+    }
+    .chat-user {
+        font-weight: bold;
+        color: #58a6ff;
+        font-size: 0.9rem;
+    }
+    .chat-time {
+        color: #8b949e;
+        font-size: 0.75rem;
+        float: right;
     }
 
     /* Saha İçi Yapısı */
@@ -148,13 +166,151 @@ def get_profile_name(profile_data):
     return "Bilinmeyen Oyuncu"
 
 # ---------------------------------------------------------
+# YARDIMCI FONKSİYONLAR: BİLDİRİM VE SAĞ ÜST ÜST BİLGİ
+# ---------------------------------------------------------
+def create_notification(user_id, title, message):
+    try:
+        supabase.table("notifications").insert({
+            "user_id": user_id,
+            "title": title,
+            "message": message
+        }).execute()
+    except Exception:
+        pass
+
+def create_notification_for_group(group_id, title, message, exclude_user_id=None, admin_only=False):
+    try:
+        query = supabase.table("group_members").select("user_id, is_admin").eq("group_id", group_id).eq("is_left", False)
+        if admin_only:
+            query = query.eq("is_admin", True)
+        members = query.execute()
+        
+        if members.data:
+            notifications = []
+            for m in members.data:
+                uid = m["user_id"]
+                if exclude_user_id and uid == exclude_user_id:
+                    continue
+                notifications.append({
+                    "user_id": uid,
+                    "title": title,
+                    "message": message
+                })
+            if notifications:
+                supabase.table("notifications").insert(notifications).execute()
+    except Exception:
+        pass
+
+def render_top_bar():
+    if not st.session_state.user:
+        return
+
+    col_space, col_refresh, col_notif = st.columns([6, 1, 1])
+    
+    with col_refresh:
+        if st.button("🔄 Yenile", use_container_width=True):
+            st.rerun()
+
+    with col_notif:
+        user_id = st.session_state.user.id
+        notifs_res = supabase.table("notifications").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+        notifs = notifs_res.data if notifs_res.data else []
+        
+        count_label = f"🔔 Bildirimler ({len(notifs)})" if notifs else "🔔 Bildirimler"
+        
+        with st.popover(count_label, use_container_width=True):
+            st.markdown("### 🔔 Bildirimleriniz")
+            if notifs:
+                for n in notifs:
+                    nc1, nc2 = st.columns([5, 1])
+                    with nc1:
+                        st.markdown(f"**{n['title']}**")
+                        st.caption(f"{n['message']}")
+                    with nc2:
+                        if st.button("❌", key=f"del_notif_{n['id']}"):
+                            supabase.table("notifications").delete().eq("id", n["id"]).execute()
+                            st.rerun()
+                    st.divider()
+            else:
+                st.caption("Henüz yeni bir bildiriminiz yok.")
+
+# ---------------------------------------------------------
+# SOHBET VE MEDYA PAYLAŞIM BİLEŞENİ
+# ---------------------------------------------------------
+def render_match_chat(match_id, user_id, group_id, is_left):
+    st.markdown("---")
+    st.write("### 💬 Maç Sohbeti & Medya Paylaşımı")
+    
+    msg_res = supabase.table("match_messages").select("*, profiles(full_name)").eq("match_id", match_id).order("created_at", desc=False).execute()
+    
+    chat_container = st.container()
+    with chat_container:
+        if msg_res.data:
+            for msg in msg_res.data:
+                author = get_profile_name(msg.get("profiles"))
+                time_str = msg.get("created_at", "")[:16].replace("T", " ")
+                
+                st.markdown(f"""
+                <div class="chat-bubble">
+                    <span class="chat-user">{author}</span> <span class="chat-time">{time_str}</span><br/>
+                    <div style="margin-top:5px;">{msg.get('message') or ''}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if msg.get("media_url"):
+                    if msg.get("media_type") == "image":
+                        st.image(msg["media_url"], use_column_width=True)
+                    elif msg.get("media_type") == "video":
+                        st.video(msg["media_url"])
+        else:
+            st.caption("Henüz mesaj yok. İlk mesajı sen yaz!")
+
+    if not is_left:
+        with st.form(key=f"chat_form_{match_id}", clear_on_submit=True):
+            user_msg = st.text_input("Mesajınız:", placeholder="Sohbete bir şeyler yazın...", key=f"input_msg_{match_id}")
+            uploaded_file = st.file_uploader("Fotoğraf / Video Ekle", type=["jpg", "jpeg", "png", "mp4", "mov"], key=f"uploader_{match_id}")
+            submit_btn = st.form_submit_button("📤 Gönder")
+
+            if submit_btn:
+                if user_msg.strip() or uploaded_file:
+                    media_url = None
+                    media_type = None
+
+                    if uploaded_file:
+                        file_ext = uploaded_file.name.split(".")[-1].lower()
+                        file_path = f"{match_id}/{uuid.uuid4()}.{file_ext}"
+                        
+                        file_bytes = uploaded_file.read()
+                        supabase.storage.from_("match_media").upload(file_path, file_bytes)
+                        media_url = supabase.storage.from_("match_media").get_public_url(file_path)
+                        
+                        if file_ext in ["jpg", "jpeg", "png"]:
+                            media_type = "image"
+                        elif file_ext in ["mp4", "mov"]:
+                            media_type = "video"
+
+                    supabase.table("match_messages").insert({
+                        "match_id": match_id,
+                        "user_id": user_id,
+                        "message": user_msg.strip(),
+                        "media_url": media_url,
+                        "media_type": media_type
+                    }).execute()
+                    
+                    user_prof = supabase.table("profiles").select("full_name").eq("id", user_id).execute()
+                    u_name = get_profile_name(user_prof.data[0]) if user_prof.data else "Bir üye"
+                    create_notification_for_group(group_id, "💬 Yeni Yorum/Medya", f"{u_name} maç sohbetine bir içerik ekledi.", exclude_user_id=user_id)
+                    
+                    st.rerun()
+
+# ---------------------------------------------------------
 # GRUP DAVET ONAY EKRANI (Giriş Yapmış Kullanıcılar İçin)
 # ---------------------------------------------------------
 def render_invite_confirmation_screen():
+    render_top_bar()
     group_id = st.session_state.pending_group_id
     user_id = st.session_state.user.id
 
-    # Grubun adını çek
     group_res = supabase.table("groups").select("id, name").eq("id", group_id).execute()
     
     if not group_res.data:
@@ -167,7 +323,6 @@ def render_invite_confirmation_screen():
 
     group_data = group_res.data[0]
 
-    # Kullanıcı zaten grubun üyesi mi?
     member_check = supabase.table("group_members").select("*").eq("group_id", group_id).eq("user_id", user_id).execute()
     if member_check.data:
         st.success(f"🎉 **{group_data['name']}** grubunun zaten bir üyesisiniz!")
@@ -183,7 +338,6 @@ def render_invite_confirmation_screen():
             st.rerun()
         return
 
-    # Bekleyen bir katılım isteği var mı?
     req_check = supabase.table("group_join_requests").select("*").eq("group_id", group_id).eq("user_id", user_id).eq("status", "pending").execute()
     if req_check.data:
         st.info(f"⏳ **{group_data['name']}** grubuna katılım isteğiniz zaten iletilmiş. Admin onayı bekleniyor.")
@@ -193,7 +347,6 @@ def render_invite_confirmation_screen():
             st.rerun()
         return
 
-    # ONAY / İPTAL FORMU
     st.markdown("<h2 class='main-title'>⚽ GRUP DAVETİ</h2>", unsafe_allow_html=True)
     st.info(f"**{group_data['name']}** grubuna katılmak üzere davet edildiniz.")
     st.write("Gruba katılma isteği gönderdikten sonra grup admini onayladığında maç kadrolarına dahil olabilirsiniz.")
@@ -209,6 +362,11 @@ def render_invite_confirmation_screen():
                     "user_id": user_id,
                     "status": "pending"
                 }).execute()
+                
+                user_prof = supabase.table("profiles").select("full_name").eq("id", user_id).execute()
+                u_name = get_profile_name(user_prof.data[0]) if user_prof.data else "Bir kullanıcı"
+                create_notification_for_group(group_id, "🙋‍♂️ Yeni Katılım İsteği", f"{u_name} gruba katılmak için istek gönderdi.", admin_only=True)
+
                 st.success("🎉 Katılım isteğiniz grup adminine iletildi!")
                 st.session_state.pending_group_id = None
                 st.query_params.clear()
@@ -277,6 +435,7 @@ def auth_screen():
 # Ana Dashboard
 # ---------------------------------------------------------
 def main_dashboard():
+    render_top_bar()
     st.markdown("<h1 class='main-title'>⚽ HALISAHA GRUPLARIM</h1>", unsafe_allow_html=True)
     user_id = st.session_state.user.id
     
@@ -334,24 +493,18 @@ def main_dashboard():
         else:
             st.info("Henüz herhangi bir gruba dahil değilsiniz.")
 
-        # =========================================================
-        # GÜNCELLEME: GRUP ARAMA VE İSTEK GÖNDERME BÖLÜMÜ
-        # =========================================================
         st.subheader("🔍 Grup Ara & Katıl")
         search_query = st.text_input("Grup Adı Ara", placeholder="Aramak istediğiniz grubun adını yazın...", key="search_group_input")
         
         if search_query.strip():
-            # Tüm grupları çek
             search_res = supabase.table("groups").select("id, name").ilike("name", f"%{search_query.strip()}%").execute()
             
             if search_res.data:
-                # Kullanıcının mevcut tüm grup isteklerini çek
                 user_requests = supabase.table("group_join_requests").select("group_id, status").eq("user_id", user_id).execute()
                 pending_group_ids = [r["group_id"] for r in user_requests.data if r.get("status") == "pending"]
 
                 found_any = False
                 for g in search_res.data:
-                    # Kullanıcının zaten üyesi olduğu grupları arama sonuçlarında filtrele
                     if g["id"] in my_group_ids:
                         continue
                     
@@ -359,7 +512,6 @@ def main_dashboard():
                     g_col1, g_col2 = st.columns([3, 1])
                     g_col1.write(f"⚽ **{g['name']}**")
                     
-                    # Kullanıcı zaten istek attıysa göster
                     if g["id"] in pending_group_ids:
                         g_col2.button("⏳ İstek Beklemede", key=f"req_pend_{g['id']}", disabled=True)
                     else:
@@ -370,6 +522,11 @@ def main_dashboard():
                                     "user_id": user_id,
                                     "status": "pending"
                                 }).execute()
+                                
+                                user_prof = supabase.table("profiles").select("full_name").eq("id", user_id).execute()
+                                u_name = get_profile_name(user_prof.data[0]) if user_prof.data else "Bir kullanıcı"
+                                create_notification_for_group(g["id"], "🙋‍♂️ Yeni Katılım İsteği", f"{u_name} gruba katılmak için istek gönderdi.", admin_only=True)
+
                                 st.success(f"'{g['name']}' grubuna katılım isteğiniz gönderildi!")
                                 st.rerun()
                             except Exception as e:
@@ -435,6 +592,7 @@ def render_pitch(team_a, team_b):
 # Grup Detay Sayfası
 # ---------------------------------------------------------
 def group_detail():
+    render_top_bar()
     group = st.session_state.selected_group
     user_id = st.session_state.user.id
     is_left = group.get("is_left", False)
@@ -490,9 +648,36 @@ def group_detail():
             m_id = selected_match["id"]
 
             players_res = supabase.table("match_players").select("user_id, custom_name, profiles(full_name)").eq("match_id", m_id).execute()
+            player_uids = [p["user_id"] for p in players_res.data if p.get("user_id")]
             player_names = [get_player_display_name(p) for p in players_res.data]
             if not player_names:
                 player_names = ["Oyuncu Bulunamadı"]
+
+            # MAÇA KATIL / AYRIL BUTONU
+            if not is_left:
+                st.markdown("#### 🏃‍♂️ Maç Katılım Durumunuz")
+                col_join_btn, col_join_info = st.columns([1, 3])
+                with col_join_btn:
+                    if user_id in player_uids:
+                        if st.button("❌ Maçtan Çık", key=f"btn_leave_m_{m_id}", use_container_width=True):
+                            supabase.table("match_players").delete().eq("match_id", m_id).eq("user_id", user_id).execute()
+                            
+                            user_prof = supabase.table("profiles").select("full_name").eq("id", user_id).execute()
+                            u_name = get_profile_name(user_prof.data[0]) if user_prof.data else "Bir üye"
+                            create_notification_for_group(group["id"], "🏃‍♂️ Maç Katılımı", f"{u_name} maç kadrosundan ayrıldı.", exclude_user_id=user_id)
+                            
+                            st.rerun()
+                    else:
+                        if st.button("✅ Maça Katıl", key=f"btn_join_m_{m_id}", use_container_width=True):
+                            supabase.table("match_players").insert({"match_id": m_id, "user_id": user_id}).execute()
+                            
+                            user_prof = supabase.table("profiles").select("full_name").eq("id", user_id).execute()
+                            u_name = get_profile_name(user_prof.data[0]) if user_prof.data else "Bir üye"
+                            create_notification_for_group(group["id"], "🏃‍♂️ Maç Katılımı", f"{u_name} maça katıldı!", exclude_user_id=user_id)
+                            
+                            st.rerun()
+
+            st.write("---")
 
             approved_draft = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).eq("is_approved", True).execute()
             
@@ -517,6 +702,9 @@ def group_detail():
                                 if st.button(f"Bu Kadroyu Resmi Kadro Yap ({creator})", key=f"appr_{d['id']}"):
                                     supabase.table("match_squad_drafts").update({"is_approved": False}).eq("match_id", m_id).execute()
                                     supabase.table("match_squad_drafts").update({"is_approved": True}).eq("id", d["id"]).execute()
+                                    
+                                    create_notification_for_group(group["id"], "📢 Resmi Kadro İlan Edildi", f"{selected_match['match_date']} tarihli maçın kadrosu resmi olarak ilan edildi!")
+                                    
                                     st.success("Resmi kadro onaylandı!")
                                     st.rerun()
                                 st.divider()
@@ -567,7 +755,6 @@ def group_detail():
                         half = len(plist) // 2
                         t_a, t_b = plist[:half], plist[half:]
                         
-                        # Beraber oynaması gerekenleri düzenle
                         for p1, p2 in together_pairs:
                             if p1 in t_a and p2 in t_b:
                                 swap_candidate = [x for x in t_a if x != p1][0] if len(t_a) > 1 else None
@@ -627,6 +814,7 @@ def group_detail():
                     with send_col:
                         btn_label = "📢 İlan Et & Resmi Kadro Yap" if group["is_admin"] else "📨 Admine Kadro Önerisini Gönder"
                         if st.button(btn_label, use_container_width=True):
+                            is_appr = True if group["is_admin"] else False
                             data = {
                                 "match_id": m_id,
                                 "user_id": user_id,
@@ -634,11 +822,23 @@ def group_detail():
                                 "team_b": selected_b,
                                 "together_pairs": together_pairs,
                                 "separate_pairs": separate_pairs,
-                                "is_approved": True if group["is_admin"] else False
+                                "is_approved": is_appr
                             }
                             supabase.table("match_squad_drafts").upsert(data, on_conflict="match_id, user_id").execute()
+                            
+                            user_prof = supabase.table("profiles").select("full_name").eq("id", user_id).execute()
+                            u_name = get_profile_name(user_prof.data[0]) if user_prof.data else "Bir üye"
+                            
+                            if group["is_admin"]:
+                                create_notification_for_group(group["id"], "📢 Resmi Kadro İlan Edildi", f"{selected_match['match_date']} tarihli maçın kadrosu onaylandı!")
+                            else:
+                                create_notification_for_group(group["id"], "📋 Kadro Önerisi", f"{u_name} yeni bir kadro önerisi gönderdi.", admin_only=True)
+
                             st.success("İşlem başarılı!")
                             st.rerun()
+
+            # GELECEK MAÇ SOHBET BÖLÜMÜ
+            render_match_chat(m_id, user_id, group["id"], is_left)
         else:
             st.info("Planlanmış gelecek bir maç bulunmuyor.")
 
@@ -671,6 +871,8 @@ def group_detail():
                             players_to_insert = [{"match_id": match_id, "user_id": player_dict[p]} for p in selected_players]
                             supabase.table("match_players").insert(players_to_insert).execute()
                             
+                            create_notification_for_group(group["id"], "⚽ Yeni Maç Açıldı!", f"{match_date} tarihli yeni bir maç planlandı.")
+
                             st.success("Maç başarıyla oluşturuldu!")
                             st.rerun()
                         except Exception as e:
@@ -737,6 +939,9 @@ def group_detail():
                     if col_req_2.button("✅ Onayla", key=f"acc_{req['id']}"):
                         supabase.table("group_members").insert({"group_id": group["id"], "user_id": req["user_id"], "is_admin": False, "is_left": False}).execute()
                         supabase.table("group_join_requests").update({"status": "approved"}).eq("id", req["id"]).execute()
+                        
+                        create_notification(req["user_id"], "🎉 Grub Katılımı Onaylandı!", f"'{group['name']}' grubuna katılım isteğiniz onaylandı.")
+
                         st.success(f"{u_name} gruba eklendi!")
                         st.rerun()
                         
@@ -762,6 +967,9 @@ def group_detail():
             st.write("#### 📊 Maç Performansı & İstatistikler")
             table_data = [{"Oyuncu": get_player_display_name(p), "Gol": p.get("goals", 0), "Asist": p.get("assists", 0)} for p in players_in_match.data]
             st.table(table_data)
+
+            # GEÇMİŞ MAÇ SOHBET VE MEDYA BÖLÜMÜ
+            render_match_chat(selected_match_id, user_id, group["id"], is_left)
         else:
             st.info("Henüz oynanmış geçmiş bir maç bulunmuyor.")
 
