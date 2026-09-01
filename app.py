@@ -989,31 +989,59 @@ def group_detail():
         past_match_ids = [m["id"] for m in past_matches_data]
         
         if past_match_ids:
-            stats_res = supabase.table("match_players").select("user_id, custom_name, goals, assists, profiles(full_name)").in_("match_id", past_match_ids).execute()
+            stats_res = supabase.table("match_players").select("id, user_id, custom_name, goals, assists, match_id, profiles(full_name)").in_("match_id", past_match_ids).execute()
             
             motm_res = supabase.table("match_motm_votes").select("match_id, voted_player_id, voted_player_name").in_("match_id", past_match_ids).execute()
             motm_data = motm_res.data if motm_res.data else []
             
-            motm_counts = {}
+            # Her maç için en çok oy alanı bularak "Maçın Adamı" ödülü kazananları hesaplayalım
+            match_votes_map = {}
             for vote in motm_data:
-                p_name = vote.get("voted_player_name")
-                if p_name:
-                    motm_counts[p_name] = motm_counts.get(p_name, 0) + 1
-                else:
-                    v_id = vote.get("voted_player_id")
-                    motm_counts[v_id] = motm_counts.get(v_id, 0) + 1
+                m_id = vote.get("match_id")
+                if m_id not in match_votes_map:
+                    match_votes_map[m_id] = {}
+                
+                # İsim veya ID üzerinden oyları topla
+                p_key = vote.get("voted_player_name") or str(vote.get("voted_player_id"))
+                match_votes_map[m_id][p_key] = match_votes_map[m_id].get(p_key, 0) + 1
+
+            # Oyuncu eşleştirmelerini doğru yapabilmek için tüm oyuncu listesini çekelim
+            match_players_map = {} # match_id -> [oyuncu satırları]
+            for row in (stats_res.data if stats_res.data else []):
+                m_id = row.get("match_id")
+                if m_id not in match_players_map:
+                    match_players_map[m_id] = []
+                match_players_map[m_id].append(row)
+
+            motm_award_counts = {} # Oyuncu adı -> Kaç kez Maçın Adamı seçildiği
+            for m_id, votes in match_votes_map.items():
+                if not votes:
+                    continue
+                max_votes = max(votes.values())
+                # En yüksek oyu alan tüm oyuncuları bul (beraberlik ihtimaline karşı)
+                top_voted_keys = [k for k, count in votes.items() if count == max_votes]
+                
+                # Bu tuşların gerçek görünen adlarını bulalım
+                m_players = match_players_map.get(m_id, [])
+                for k in top_voted_keys:
+                    resolved_name = k
+                    for mp in m_players:
+                        d_name = get_player_display_name(mp)
+                        u_id_str = str(mp.get("user_id"))
+                        p_id_str = str(mp.get("id"))
+                        if k == d_name or k == u_id_str or k == p_id_str:
+                            resolved_name = d_name
+                            break
+                    motm_award_counts[resolved_name] = motm_award_counts.get(resolved_name, 0) + 1
 
             if stats_res.data:
                 leaderboard = {}
                 for row in stats_res.data:
                     name = get_player_display_name(row)
-                    u_id = row.get("user_id")
-                    p_id = row.get("id")
-                    
                     goals = row.get("goals") or 0
                     assists = row.get("assists") or 0
                     
-                    motm_total = motm_counts.get(name, 0) + motm_counts.get(str(u_id), 0) + motm_counts.get(str(p_id), 0)
+                    motm_wins = motm_award_counts.get(name, 0)
                     
                     if name not in leaderboard:
                         leaderboard[name] = {
@@ -1027,7 +1055,7 @@ def group_detail():
                     leaderboard[name]["Maç Sayısı"] += 1
                     leaderboard[name]["Toplam Gol"] += goals
                     leaderboard[name]["Toplam Asist"] += assists
-                    leaderboard[name]["Maçın Adamı"] = motm_total
+                    leaderboard[name]["Maçın Adamı"] = motm_wins
                     leaderboard[name]["Toplam Skor Katkısı"] += (goals + assists)
 
                 lb_list = [{"Oyuncu": k, **v} for k, v in leaderboard.items()]
