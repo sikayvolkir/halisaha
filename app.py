@@ -199,6 +199,7 @@ def create_notification_for_group(group_id, title, message, exclude_user_id=None
     except Exception:
         pass
 
+# BİLDİRİM LİSTELEME EKRANI (GÜNCELLENDİ)
 def render_top_bar():
     if not st.session_state.user:
         return
@@ -218,12 +219,21 @@ def render_top_bar():
         
         with st.popover(count_label, use_container_width=True):
             st.markdown("### 🔔 Bildirimleriniz")
+            
             if notifs:
+                if st.button("🗑️ Tümünü Temizle", use_container_width=True, key="clear_all_notifs"):
+                    supabase.table("notifications").delete().eq("user_id", user_id).execute()
+                    st.rerun()
+                st.divider()
+
                 for n in notifs:
                     nc1, nc2 = st.columns([5, 1])
                     with nc1:
                         st.markdown(f"**{n['title']}**")
-                        st.caption(f"{n['message']}")
+                        st.write(f"{n['message']}")
+                        if n.get("created_at"):
+                            time_str = n['created_at'][:16].replace("T", " ")
+                            st.caption(f"🕒 {time_str}")
                     with nc2:
                         if st.button("❌", key=f"del_notif_{n['id']}"):
                             supabase.table("notifications").delete().eq("id", n["id"]).execute()
@@ -671,7 +681,7 @@ def group_detail():
             if not player_names:
                 player_names = ["Oyuncu Bulunamadı"]
 
-            # MAÇA KATIL / AYRIL BUTONU BÖLÜMÜ (GÜNCELLENDİ)
+            # MAÇA KATIL / AYRIL BUTONU BÖLÜMÜ
             if not is_left:
                 st.markdown("#### 🏃‍♂️ Maç Katılım Durumunuz")
                 col_join_btn, col_join_info = st.columns([1, 3])
@@ -718,7 +728,7 @@ def group_detail():
                             create_notification_for_group(group["id"], "🏃‍♂️ Maç Katılımı", f"{u_name} maç kadrosundan ayrıldı.", exclude_user_id=user_id)
                             
                             if was_approved:
-                                create_notification_for_group(group["id"], "⚠️ Onaylı Kadro Bozuldu", f"{u_name} maçtan ayrıldığı için onaylanmış kadro iptal edildi. Adminin tekrar onaylaması gerekiyor.", admin_only=True)
+                                create_notification_for_group(group["id"], "⚠️ Onaylı Kadro Bozuldu", f"{u_name} maçtan ayrıldığı için onaylanmış kadro iptal edildi. Tekrar onaylamanız gerekiyor.", admin_only=True)
 
                             st.rerun()
                     else:
