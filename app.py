@@ -4,9 +4,6 @@ import random
 from datetime import date
 import uuid
 
-# ---------------------------------------------------------
-# Sayfa Konfigürasyonu & Tema
-# ---------------------------------------------------------
 st.set_page_config(page_title="Halısaha Takip", page_icon="⚽", layout="wide")
 
 st.markdown("""
@@ -28,9 +25,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ---------------------------------------------------------
-# Supabase Bağlantısı
-# ---------------------------------------------------------
 @st.cache_resource
 def init_supabase() -> Client:
     url = st.secrets["SUPABASE_URL"]
@@ -39,7 +33,6 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# Session State Tanımlamaları
 if "user" not in st.session_state:
     st.session_state.user = None
 if "selected_group" not in st.session_state:
@@ -71,9 +64,6 @@ def get_profile_name(profile_data):
         return profile_data[0].get("full_name", "Bilinmeyen Oyuncu")
     return "Bilinmeyen Oyuncu"
 
-# ---------------------------------------------------------
-# YARDIMCI FONKSİYONLAR: BİLDİRİM VE SAĞ ÜST ÜST BİLGİ
-# ---------------------------------------------------------
 def create_notification(user_id, title, message):
     try:
         supabase.table("notifications").insert({
@@ -142,9 +132,6 @@ def render_top_bar():
             else:
                 st.caption("Henüz yeni bir bildiriminiz yok.")
 
-# ---------------------------------------------------------
-# SOHBET VE MEDYA PAYLAŞIM BİLEŞENİ
-# ---------------------------------------------------------
 def render_match_chat(match_id, user_id, group_id, is_left):
     st.markdown("---")
     st.write("### 💬 Maç Sohbeti & Medya Paylaşımı")
@@ -241,9 +228,6 @@ def render_match_chat(match_id, user_id, group_id, is_left):
                     
                     st.rerun()
 
-# ---------------------------------------------------------
-# GRUP DAVET ONAY EKRANI
-# ---------------------------------------------------------
 def render_invite_confirmation_screen():
     render_top_bar()
     group_id = st.session_state.pending_group_id
@@ -318,9 +302,6 @@ def render_invite_confirmation_screen():
             st.query_params.clear()
             st.rerun()
 
-# ---------------------------------------------------------
-# Kimlik Doğrulama Ekranı
-# ---------------------------------------------------------
 def auth_screen():
     st.markdown("<h1 class='main-title'>⚽ HALISAHA TAKİP SİSTEMİ</h1>", unsafe_allow_html=True)
     
@@ -371,9 +352,6 @@ def auth_screen():
                     except Exception as e:
                         st.error(f"Kayıt işlemi başarısız: {e}")
 
-# ---------------------------------------------------------
-# Ana Dashboard
-# ---------------------------------------------------------
 def main_dashboard():
     render_top_bar()
     st.markdown("<h1 class='main-title'>⚽ HALISAHA GRUPLARIM</h1>", unsafe_allow_html=True)
@@ -505,9 +483,6 @@ def main_dashboard():
                 else:
                     st.warning("Lütfen grup adı girin.")
 
-# ---------------------------------------------------------
-# Sahada Kadro Gösterme Bileşeni
-# ---------------------------------------------------------
 def render_pitch(team_a, team_b):
     chips_a = "".join([f"<span class='player-chip'>{p}</span>" for p in team_a]) if team_a else "<em style='color:rgba(255,255,255,0.7);'>Henüz oyuncu eklenmedi</em>"
     chips_b = "".join([f"<span class='player-chip player-chip-b'>{p}</span>" for p in team_b]) if team_b else "<em style='color:rgba(255,255,255,0.7);'>Henüz oyuncu eklenmedi</em>"
@@ -531,9 +506,6 @@ def render_pitch(team_a, team_b):
     """
     st.markdown(pitch_html, unsafe_allow_html=True)
 
-# ---------------------------------------------------------
-# Grup Detay Sayfası
-# ---------------------------------------------------------
 def group_detail():
     render_top_bar()
     group = st.session_state.selected_group
@@ -577,9 +549,6 @@ def group_detail():
     all_matches = supabase.table("matches").select("*").eq("group_id", group["id"]).execute()
     matches_list = all_matches.data if all_matches.data else []
 
-    # =========================================================
-    # TAB 1: GELECEK MAÇLAR & KADRO KURMA
-    # =========================================================
     with tab_upcoming:
         st.subheader("📅 Gelecek Maçlar ve Kadro Planlaması")
         upcoming_matches_data = [m for m in matches_list if str(m["match_date"]) >= today_str]
@@ -597,7 +566,6 @@ def group_detail():
             if not player_names:
                 player_names = ["Henüz Katılımcı Yok"]
 
-            # MAÇA KATIL / AYRIL BUTONU
             if not is_left:
                 st.markdown("#### 🏃‍♂️ Maç Katılım Durumunuz")
                 col_join_btn, col_join_info = st.columns([1, 3])
@@ -632,22 +600,18 @@ def group_detail():
 
             st.write("---")
 
-            # ONAYLANMIŞ RESMİ KADRO KONTROLÜ
             approved_draft = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).eq("is_approved", True).execute()
             
             if approved_draft.data:
-                # ONAYLI KADRO VARSA: SADECE KADRO SEÇENEĞİ/GÖRSELİ EKRANA GELİR
                 st.success("🏆 **BU MAÇIN RESMİ KADROSU İLAN EDİLDİ!**")
                 official = approved_draft.data[0]
                 render_pitch(official["team_a"], official["team_b"])
                 
-                # Admin isterse kadro onayını kaldırabilir/değiştirebilir
                 if group["is_admin"] and not is_left:
                     if st.button("🔄 Kadro Onayını Kaldır ve Yeniden Düzenle", key=f"unapprove_{official['id']}"):
                         supabase.table("match_squad_drafts").update({"is_approved": False}).eq("id", official["id"]).execute()
                         st.rerun()
             else:
-                # ONAYLI KADRO YOKSA: KADRO SEÇME VE ÖNERİ ALANLARI GÖSTERİLİR
                 st.info("💡 Resmi kadro henüz ilan edilmedi. Aşağıdan kadro önerisi yapabilir veya kendi taslağınızı oluşturabilirsiniz.")
                 
                 user_draft_res = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).eq("user_id", user_id).execute()
@@ -787,14 +751,10 @@ def group_detail():
                             st.success("İşlem başarılı!")
                             st.rerun()
 
-            # GELECEK MAÇ SOHBET BÖLÜMÜ
             render_match_chat(m_id, user_id, group["id"], is_left)
         else:
             st.info("Planlanmış gelecek bir maç bulunmuyor.")
 
-    # =========================================================
-    # TAB 2: YENİ MAÇ OLUŞTUR
-    # =========================================================
     if tab_create:
         with tab_create:
             if group["is_admin"]:
@@ -828,9 +788,6 @@ def group_detail():
                         except Exception as e:
                             st.error(f"Hata: {e}")
 
-    # =========================================================
-    # TAB 3: DIŞARIDAN OYUNCU EKLEME (ADMİN)
-    # =========================================================
     if group["is_admin"] and tab_custom_player:
         with tab_custom_player:
             st.subheader("👤 Dışarıdan / Kayıtsız Oyuncu Ekle (Sadece Admin)")
@@ -855,9 +812,6 @@ def group_detail():
                         else:
                             st.warning("Lütfen bir isim girin.")
 
-    # =========================================================
-    # TAB: GRUP ÜYELERİ & DAVET LİNKİ
-    # =========================================================
     with tab_members:
         st.subheader("🔗 Gruba Davet Linki")
         base_url = "https://halisaha-takip.streamlit.app"
@@ -900,9 +854,6 @@ def group_detail():
                         st.info(f"{u_name} isteği reddedildi.")
                         st.rerun()
 
-    # =========================================================
-    # TAB: GEÇMİŞ MAÇLAR
-    # =========================================================
     with tab_past:
         st.subheader("📜 Oynanmış Geçmiş Maçlar")
         past_matches_data = [m for m in matches_list if str(m["match_date"]) < today_str]
@@ -922,9 +873,6 @@ def group_detail():
         else:
             st.info("Henüz oynanmış geçmiş bir maç bulunmuyor.")
 
-    # =========================================================
-    # TAB: PUAN SIRALAMASI
-    # =========================================================
     with tab_leaderboard:
         st.subheader("🏆 Grup Puan ve Performans Sıralaması")
         past_match_ids = [m["id"] for m in matches_list if str(m["match_date"]) < today_str]
@@ -955,9 +903,6 @@ def group_detail():
         else:
             st.info("Henüz istatistiki veri oluşturacak geçmiş bir maç oynanmadı.")
 
-# ---------------------------------------------------------
-# UYGULAMA YÖNLENDİRME MERKEZİ (ROUTING)
-# ---------------------------------------------------------
 def main():
     if st.session_state.user is None:
         auth_screen()
