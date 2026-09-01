@@ -537,11 +537,11 @@ def group_detail():
         
     st.markdown(f"<h1 class='main-title'>⚽ {group['name']}</h1>", unsafe_allow_html=True)
 
+    # Sekmeler kullanıcı rolüne göre dinamik ve sadece admine görünecek şekilde ayarlandı
     tabs_list = ["📅 Gelecek Maçlar & Kadrolar"]
-    if not is_left:
+    if not is_left and group["is_admin"]:
         tabs_list.append("➕ Maç Planla")
-        if group["is_admin"]:
-            tabs_list.append("➕ Dışarıdan Oyuncu Ekle (Admin)")
+        tabs_list.append("➕ Dışarıdan Oyuncu Ekle (Admin)")
             
     tabs_list.extend(["👥 Grup Üyeleri & İstekler", "📜 Geçmiş Maçlar", "🏆 Puan Sıralaması"])
 
@@ -553,12 +553,11 @@ def group_detail():
     tab_create = None
     tab_custom_player = None
     
-    if not is_left:
+    if not is_left and group["is_admin"]:
         tab_create = tabs[idx]
         idx += 1
-        if group["is_admin"]:
-            tab_custom_player = tabs[idx]
-            idx += 1
+        tab_custom_player = tabs[idx]
+        idx += 1
 
     tab_members = tabs[idx]
     tab_past = tabs[idx+1]
@@ -778,6 +777,17 @@ def group_detail():
                             st.success("İşlem başarılı!")
                             st.rerun()
 
+            # Sadece admindeyse seçili maçı en alttan sikebilme özelliği
+            if group["is_admin"]:
+                st.markdown("---")
+                if st.button("🗑️ Maçı Sil", key=f"del_upcoming_match_{m_id}", use_container_width=True):
+                    try:
+                        supabase.table("matches").delete().eq("id", m_id).execute()
+                        st.success("Maç silindi!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Maç silinirken hata oluştu: {e}")
+
             render_match_chat(m_id, user_id, group["id"], is_left)
         else:
             st.info("Planlanmış gelecek bir maç bulunmuyor.")
@@ -848,13 +858,33 @@ def group_detail():
         st.divider()
 
         st.subheader("👥 Grup Üyeleri")
-        members = supabase.table("group_members").select("is_admin, is_left, profiles(full_name)").eq("group_id", group["id"]).execute()
+        members = supabase.table("group_members").select("user_id, is_admin, is_left, profiles(full_name)").eq("group_id", group["id"]).execute()
         
         for m in members.data:
             name = get_profile_name(m.get("profiles"))
             status = " (Ayrıldı)" if m.get("is_left") else ""
             role = "⭐ Admin" if m["is_admin"] else "🏃 Oyuncu"
-            st.write(f"- **{name}** ({role}){status}")
+            
+            col_m1, col_m2 = st.columns([5, 1])
+            with col_m1:
+                st.write(f"- **{name}** ({role}){status}")
+            
+            # Admin için her üyenin yanında üç nokta menüsü (gruptan çıkarma ve adminlik verme)
+            if group["is_admin"] and not is_left and str(m["user_id"]) != str(user_id):
+                with col_m2:
+                    with st.popover("⋮"):
+                        if not m["is_admin"]:
+                            if st.button("⭐ Admin Yap", key=f"make_admin_{m['user_id']}"):
+                                supabase.table("group_members").update({"is_admin": True}).eq("group_id", group["id"]).eq("user_id", m["user_id"]).execute()
+                                create_notification(m["user_id"], "⭐ Admin Yetkisi", f"'{group['name']}' grubunda admin yapıldınız.")
+                                st.success(f"{name} admin yapıldı!")
+                                st.rerun()
+                        
+                        if st.button("❌ Gruptan Çıkar", key=f"kick_user_{m['user_id']}"):
+                            supabase.table("group_members").delete().eq("group_id", group["id"]).eq("user_id", m["user_id"]).execute()
+                            create_notification(m["user_id"], "🚪 Gruptan Çıkarıldınız", f"'{group['name']}' grubundan çıkarıldınız.")
+                            st.success(f"{name} gruptan çıkarıldı!")
+                            st.rerun()
             
         if group["is_admin"] and not is_left:
             st.divider()
@@ -979,6 +1009,17 @@ def group_detail():
                 for pn, count in sorted(vote_counts.items(), key=lambda x: x[1], reverse=True):
                     st.write(f"- **{pn}**: {count} oy")
 
+            # Sadece admindeyse seçili geçmiş maçı en alttan sikebilme özelliği
+            if group["is_admin"]:
+                st.markdown("---")
+                if st.button("🗑️ Maçı Sil", key=f"del_past_match_{selected_match_id}", use_container_width=True):
+                    try:
+                        supabase.table("matches").delete().eq("id", selected_match_id).execute()
+                        st.success("Geçmiş maç silindi!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Maç silinirken hata oluştu: {e}")
+
             render_match_chat(selected_match_id, user_id, group["id"], is_left)
         else:
             st.info("Henüz oynanmış geçmiş bir maç bulunmuyor.")
@@ -994,34 +1035,29 @@ def group_detail():
             motm_res = supabase.table("match_motm_votes").select("match_id, voted_player_id, voted_player_name").in_("match_id", past_match_ids).execute()
             motm_data = motm_res.data if motm_res.data else []
             
-            # Her maç için en çok oy alanı bularak "Maçın Adamı" ödülü kazananları hesaplayalım
             match_votes_map = {}
             for vote in motm_data:
                 m_id = vote.get("match_id")
                 if m_id not in match_votes_map:
                     match_votes_map[m_id] = {}
                 
-                # İsim veya ID üzerinden oyları topla
                 p_key = vote.get("voted_player_name") or str(vote.get("voted_player_id"))
                 match_votes_map[m_id][p_key] = match_votes_map[m_id].get(p_key, 0) + 1
 
-            # Oyuncu eşleştirmelerini doğru yapabilmek için tüm oyuncu listesini çekelim
-            match_players_map = {} # match_id -> [oyuncu satırları]
+            match_players_map = {}
             for row in (stats_res.data if stats_res.data else []):
                 m_id = row.get("match_id")
                 if m_id not in match_players_map:
                     match_players_map[m_id] = []
                 match_players_map[m_id].append(row)
 
-            motm_award_counts = {} # Oyuncu adı -> Kaç kez Maçın Adamı seçildiği
+            motm_award_counts = {}
             for m_id, votes in match_votes_map.items():
                 if not votes:
                     continue
                 max_votes = max(votes.values())
-                # En yüksek oyu alan tüm oyuncuları bul (beraberlik ihtimaline karşı)
                 top_voted_keys = [k for k, count in votes.items() if count == max_votes]
                 
-                # Bu tuşların gerçek görünen adlarını bulalım
                 m_players = match_players_map.get(m_id, [])
                 for k in top_voted_keys:
                     resolved_name = k
