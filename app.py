@@ -882,11 +882,84 @@ def group_detail():
             selected_match_label = st.selectbox("Bir Geçmiş Maç Seçin:", list(match_options.keys()))
             selected_match_id = match_options[selected_match_label]
             
-            players_in_match = supabase.table("match_players").select("user_id, custom_name, goals, assists, profiles(full_name)").eq("match_id", selected_match_id).execute()
+            players_res = supabase.table("match_players").select("id, user_id, custom_name, goals, assists, profiles(full_name)").eq("match_id", selected_match_id).execute()
+            players_in_match = players_res.data if players_res.data else []
+
+            st.write("#### 📊 Maç Kadrosu & İstatistik Güncelleme")
+            st.caption("Her kullanıcı kendi istatistiklerini (veya admin herkesinkini) güncelleyebilir.")
+
+            for p in players_in_match:
+                p_name = get_player_display_name(p)
+                p_uid = p.get("user_id")
+                
+                can_edit = group["is_admin"] or (p_uid and str(p_uid) == str(user_id))
+                
+                with st.container():
+                    col_p1, col_p2, col_p3, col_p4 = st.columns([3, 1, 1, 1])
+                    col_p1.write(f"👤 **{p_name}** {'(Sen)' if p_uid and str(p_uid) == str(user_id) else ''}")
+                    col_p2.write(f"⚽ Gol: **{p.get('goals', 0)}**")
+                    col_p3.write(f"👟 Asist: **{p.get('assists', 0)}**")
+                    
+                    if can_edit and not is_left:
+                        with col_p4:
+                            with st.popover("✏️ Düzenle"):
+                                with st.form(key=f"form_stat_{p['id']}"):
+                                    new_goals = st.number_input("Gol", min_value=0, value=p.get("goals", 0), key=f"g_{p['id']}")
+                                    new_assists = st.number_input("Asist", min_value=0, value=p.get("assists", 0), key=f"a_{p['id']}")
+                                    if st.form_submit_button("Kaydet"):
+                                        supabase.table("match_players").update({"goals": new_goals, "assists": new_assists}).eq("id", p["id"]).execute()
+                                        st.success("Güncellendi!")
+                                        st.rerun()
+                    st.divider()
+
+            st.write("#### ⭐ Maçın Adamı (Man of the Match) Oylaması")
+            votes_res = supabase.table("match_motm_votes").select("*").eq("match_id", selected_match_id).execute()
+            all_votes = votes_res.data if votes_res.data else []
             
-            st.write("#### 📊 Maç Performansı & İstatistikler")
-            table_data = [{"Oyuncu": get_player_display_name(p), "Gol": p.get("goals", 0), "Asist": p.get("assists", 0)} for p in players_in_match.data]
-            st.table(table_data)
+            my_vote = next((v for v in all_votes if v.get("user_id") == user_id), None)
+            
+            vote_options = {get_player_display_name(p): p for p in players_in_match}
+            
+            if not is_left:
+                with st.form(key=f"motm_form_{selected_match_id}"):
+                    current_voted_player_name = None
+                    if my_vote:
+                        voted_p_obj = next((p for p in players_in_match if p.get("id") == my_vote.get("voted_player_id") or (p.get("user_id") and p.get("user_id") == my_vote.get("voted_player_id"))), None)
+                        if voted_p_obj:
+                            current_voted_player_name = get_player_display_name(voted_p_obj)
+                    
+                    default_idx = 0
+                    opt_keys = list(vote_options.keys())
+                    if current_voted_player_name in opt_keys:
+                        default_idx = opt_keys.index(current_voted_player_name)
+                        
+                    sel_voted_name = st.selectbox("Bu maçın adamı kimdi?", opt_keys, index=default_idx)
+                    submit_vote = st.form_submit_button("🗳️ Oyumu Kaydet / Değiştir")
+                    
+                    if submit_vote and sel_voted_name:
+                        target_p = vote_options[sel_voted_name]
+                        target_id = target_p.get("user_id") if target_p.get("user_id") else target_p.get("id")
+                        
+                        vote_data = {
+                            "match_id": selected_match_id,
+                            "user_id": user_id,
+                            "voted_player_id": target_id,
+                            "voted_player_name": sel_voted_name
+                        }
+                        supabase.table("match_motm_votes").upsert(vote_data, on_conflict="match_id, user_id").execute()
+                        st.success("Oyunuz kaydedildi!")
+                        st.rerun()
+
+            vote_counts = {}
+            for v in all_votes:
+                p_name = v.get("voted_player_name")
+                if p_name:
+                    vote_counts[p_name] = vote_counts.get(p_name, 0) + 1
+            
+            if vote_counts:
+                st.caption("📊 Anlık Oy Dağılımı:")
+                for pn, count in sorted(vote_counts.items(), key=lambda x: x[1], reverse=True):
+                    st.write(- f"**{pn}**: {count} oy")
 
             render_match_chat(selected_match_id, user_id, group["id"], is_left)
         else:
@@ -894,27 +967,53 @@ def group_detail():
 
     with tab_leaderboard:
         st.subheader("🏆 Grup Puan ve Performans Sıralaması")
-        past_match_ids = [m["id"] for m in matches_list if str(m["match_date"]) < today_str]
+        past_matches_data = [m for m in matches_list if str(m["match_date"]) < today_str]
+        past_match_ids = [m["id"] for m in past_matches_data]
         
         if past_match_ids:
             stats_res = supabase.table("match_players").select("user_id, custom_name, goals, assists, profiles(full_name)").in_("match_id", past_match_ids).execute()
+            
+            motm_res = supabase.table("match_motm_votes").select("match_id, voted_player_id, voted_player_name").in_("match_id", past_match_ids).execute()
+            motm_data = motm_res.data if motm_res.data else []
+            
+            motm_counts = {}
+            for vote in motm_data:
+                p_name = vote.get("voted_player_name")
+                if p_name:
+                    motm_counts[p_name] = motm_counts.get(p_name, 0) + 1
+                else:
+                    v_id = vote.get("voted_player_id")
+                    motm_counts[v_id] = motm_counts.get(v_id, 0) + 1
+
             if stats_res.data:
                 leaderboard = {}
                 for row in stats_res.data:
                     name = get_player_display_name(row)
+                    u_id = row.get("user_id")
+                    p_id = row.get("id")
+                    
                     goals = row.get("goals") or 0
                     assists = row.get("assists") or 0
                     
+                    motm_total = motm_counts.get(name, 0) + motm_counts.get(u_id, 0) + motm_counts.get(p_id, 0)
+                    
                     if name not in leaderboard:
-                        leaderboard[name] = {"Maç Sayısı": 0, "Toplam Gol": 0, "Toplam Asist": 0, "Toplam Skoru (Skor Katkısı)": 0}
+                        leaderboard[name] = {
+                            "Maç Sayısı": 0, 
+                            "Toplam Gol": 0, 
+                            "Toplam Asist": 0, 
+                            "Maçın Adamı": 0,
+                            "Toplam Skor Katkısı": 0
+                        }
                     
                     leaderboard[name]["Maç Sayısı"] += 1
                     leaderboard[name]["Toplam Gol"] += goals
                     leaderboard[name]["Toplam Asist"] += assists
-                    leaderboard[name]["Toplam Skoru (Skor Katkısı)"] += (goals + assists)
+                    leaderboard[name]["Maçın Adamı"] = motm_total
+                    leaderboard[name]["Toplam Skor Katkısı"] += (goals + assists)
 
                 lb_list = [{"Oyuncu": k, **v} for k, v in leaderboard.items()]
-                lb_list = sorted(lb_list, key=lambda x: x["Toplam Skoru (Skor Katkısı)"], reverse=True)
+                lb_list = sorted(lb_list, key=lambda x: (x["Toplam Skor Katkısı"], x["Maçın Adamı"]), reverse=True)
                 
                 st.table(lb_list)
             else:
