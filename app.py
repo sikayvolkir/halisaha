@@ -11,105 +11,20 @@ st.set_page_config(page_title="Halısaha Takip", page_icon="⚽", layout="wide")
 
 st.markdown("""
     <style>
-    .stApp {
-        background-color: #0d1117;
-        color: #f0f6fc;
-    }
-    .main-title {
-        color: #2ea44f;
-        text-align: center;
-        font-weight: bold;
-        margin-bottom: 20px;
-    }
-    .stButton > button {
-        background-color: #238636;
-        color: white;
-        border-radius: 6px;
-        border: none;
-        padding: 8px 16px;
-        font-weight: bold;
-    }
-    .stButton > button:hover {
-        background-color: #2ea44f;
-        color: white;
-    }
-    .comment-card {
-        background-color: #161b22;
-        border-left: 3px solid #238636;
-        padding: 10px 15px;
-        margin-bottom: 10px;
-        border-radius: 4px;
-    }
-    .chat-bubble {
-        background-color: #161b22;
-        border-left: 4px solid #238636;
-        padding: 10px 14px;
-        border-radius: 8px;
-        margin-bottom: 12px;
-    }
-    .chat-user {
-        font-weight: bold;
-        color: #58a6ff;
-        font-size: 0.9rem;
-    }
-    .chat-time {
-        color: #8b949e;
-        font-size: 0.75rem;
-        float: right;
-    }
-
-    /* Saha İçi Yapısı */
-    .pitch-container {
-        background-color: #2e7d32;
-        background-image: linear-gradient(to right, rgba(255,255,255,0.15) 50%, transparent 50%);
-        background-size: 80px 100%;
-        border: 4px solid #ffffff;
-        border-radius: 12px;
-        padding: 20px;
-        margin: 15px 0;
-        position: relative;
-        min-height: 350px;
-        display: flex;
-        justify-content: space-between;
-    }
-    .pitch-half {
-        width: 48%;
-        z-index: 2;
-    }
-    .pitch-center-line {
-        position: absolute;
-        left: 50%;
-        top: 0;
-        bottom: 0;
-        width: 3px;
-        background-color: rgba(255, 255, 255, 0.7);
-        z-index: 1;
-    }
-    .pitch-team-title-a, .pitch-team-title-b {
-        color: #ffffff;
-        font-weight: bold;
-        font-size: 1.2rem;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
-        margin-bottom: 15px;
-    }
-    .player-chip-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-    }
-    .player-chip {
-        background-color: #1f6feb;
-        color: white;
-        padding: 8px 14px;
-        border-radius: 20px;
-        font-size: 0.95rem;
-        font-weight: 600;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.5);
-        border: 1px solid rgba(255,255,255,0.5);
-    }
-    .player-chip-b {
-        background-color: #da3633;
-    }
+    .stApp { background-color: #0d1117; color: #f0f6fc; }
+    .main-title { color: #2ea44f; text-align: center; font-weight: bold; margin-bottom: 20px; }
+    .stButton > button { background-color: #238636; color: white; border-radius: 6px; border: none; padding: 8px 16px; font-weight: bold; }
+    .stButton > button:hover { background-color: #2ea44f; color: white; }
+    .chat-bubble { background-color: #161b22; border-left: 4px solid #238636; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; }
+    .chat-user { font-weight: bold; color: #58a6ff; font-size: 0.9rem; }
+    .chat-time { color: #8b949e; font-size: 0.75rem; float: right; }
+    .pitch-container { background-color: #2e7d32; background-image: linear-gradient(to right, rgba(255,255,255,0.15) 50%, transparent 50%); background-size: 80px 100%; border: 4px solid #ffffff; border-radius: 12px; padding: 20px; margin: 15px 0; position: relative; min-height: 350px; display: flex; justify-content: space-between; }
+    .pitch-half { width: 48%; z-index: 2; }
+    .pitch-center-line { position: absolute; left: 50%; top: 0; bottom: 0; width: 3px; background-color: rgba(255, 255, 255, 0.7); z-index: 1; }
+    .pitch-team-title-a, .pitch-team-title-b { color: #ffffff; font-weight: bold; font-size: 1.2rem; text-shadow: 2px 2px 4px rgba(0,0,0,0.8); margin-bottom: 15px; }
+    .player-chip-container { display: flex; flex-wrap: wrap; gap: 8px; }
+    .player-chip { background-color: #1f6feb; color: white; padding: 8px 14px; border-radius: 20px; font-size: 0.95rem; font-weight: 600; box-shadow: 0 4px 8px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.5); }
+    .player-chip-b { background-color: #da3633; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -139,13 +54,6 @@ if "separate_count" not in st.session_state:
 if "group_id" in st.query_params:
     st.session_state.pending_group_id = st.query_params["group_id"]
 
-try:
-    session = supabase.auth.get_session()
-    if session and session.user:
-        st.session_state.user = session.user
-except Exception:
-    pass
-
 def get_player_display_name(p_item):
     if p_item.get("custom_name"):
         return p_item["custom_name"]
@@ -173,33 +81,25 @@ def create_notification(user_id, title, message):
             "title": title,
             "message": message
         }).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        st.error(f"Bildirim hatası: {e}")
 
 def create_notification_for_group(group_id, title, message, exclude_user_id=None, admin_only=False):
     try:
-        query = supabase.table("group_members").select("user_id, is_admin").eq("group_id", group_id).eq("is_left", False)
+        query = supabase.table("group_members").select("user_id, is_admin").eq("group_id", group_id).neq("is_left", True)
         if admin_only:
             query = query.eq("is_admin", True)
         members = query.execute()
         
         if members.data:
-            notifications = []
             for m in members.data:
                 uid = m["user_id"]
-                if exclude_user_id and uid == exclude_user_id:
+                if exclude_user_id and str(uid) == str(exclude_user_id):
                     continue
-                notifications.append({
-                    "user_id": uid,
-                    "title": title,
-                    "message": message
-                })
-            if notifications:
-                supabase.table("notifications").insert(notifications).execute()
-    except Exception:
-        pass
+                create_notification(uid, title, message)
+    except Exception as e:
+        print(f"Grup bildirimi hatası: {e}")
 
-# BİLDİRİM LİSTELEME EKRANI (GÜNCELLENDİ)
 def render_top_bar():
     if not st.session_state.user:
         return
@@ -252,7 +152,7 @@ def render_match_chat(match_id, user_id, group_id, is_left):
     try:
         msg_res = (
             supabase.table("match_messages")
-            .select("*, profiles:user_id(full_name)")
+            .select("*, profiles!match_messages_user_id_fkey(full_name)")
             .eq("match_id", match_id)
             .order("created_at", desc=False)
             .execute()
@@ -270,12 +170,20 @@ def render_match_chat(match_id, user_id, group_id, is_left):
             messages_data = msg_res.data if msg_res.data else []
         except Exception:
             messages_data = []
+
+    uids = list(set([m["user_id"] for m in messages_data if m.get("user_id")]))
+    profiles_map = {}
+    if uids:
+        p_res = supabase.table("profiles").select("id, full_name").in_("id", uids).execute()
+        if p_res.data:
+            profiles_map = {p["id"]: p.get("full_name") for p in p_res.data}
     
     chat_container = st.container()
     with chat_container:
         if messages_data:
             for msg in messages_data:
-                author = get_profile_name(msg.get("profiles"))
+                msg_uid = msg.get("user_id")
+                author = profiles_map.get(msg_uid) or get_profile_name(msg.get("profiles"))
                 time_str = msg.get("created_at", "")[:16].replace("T", " ")
                 
                 st.markdown(f"""
@@ -295,7 +203,7 @@ def render_match_chat(match_id, user_id, group_id, is_left):
 
     if not is_left:
         with st.form(key=f"chat_form_{match_id}", clear_on_submit=True):
-            user_msg = st.text_input("Mesajınız:", placeholder="Sohbete bir şeyler yazın...", key=f"input_msg_{match_id}")
+            user_msg = st.text_input("Mesajınız:", placeholder="Sohbete bir şey yazın...", key=f"input_msg_{match_id}")
             uploaded_file = st.file_uploader("Fotoğraf / Video Ekle", type=["jpg", "jpeg", "png", "mp4", "mov"], key=f"uploader_{match_id}")
             submit_btn = st.form_submit_button("📤 Gönder")
 
@@ -317,17 +225,19 @@ def render_match_chat(match_id, user_id, group_id, is_left):
                         elif file_ext in ["mp4", "mov"]:
                             media_type = "video"
 
+                    current_active_user_id = st.session_state.user.id
+
                     supabase.table("match_messages").insert({
                         "match_id": match_id,
-                        "user_id": user_id,
+                        "user_id": current_active_user_id,
                         "message": user_msg.strip(),
                         "media_url": media_url,
                         "media_type": media_type
                     }).execute()
                     
-                    user_prof = supabase.table("profiles").select("full_name").eq("id", user_id).execute()
+                    user_prof = supabase.table("profiles").select("full_name").eq("id", current_active_user_id).execute()
                     u_name = get_profile_name(user_prof.data[0]) if user_prof.data else "Bir üye"
-                    create_notification_for_group(group_id, "💬 Yeni Yorum/Medya", f"{u_name} maç sohbetine bir içerik ekledi.", exclude_user_id=user_id)
+                    create_notification_for_group(group_id, "💬 Yeni Yorum/Medya", f"{u_name} maç sohbetine bir içerik ekledi.", exclude_user_id=current_active_user_id)
                     
                     st.rerun()
 
@@ -453,9 +363,11 @@ def auth_screen():
                             "password": password,
                             "options": {"data": {"full_name": full_name}}
                         })
-                        st.session_state.user = res.user
-                        st.success("Kayıt başarılı!")
-                        st.rerun()
+                        if res.user:
+                            supabase.table("profiles").upsert({"id": res.user.id, "full_name": full_name}).execute()
+                            st.session_state.user = res.user
+                            st.success("Kayıt başarılı!")
+                            st.rerun()
                     except Exception as e:
                         st.error(f"Kayıt işlemi başarısız: {e}")
 
@@ -468,7 +380,10 @@ def main_dashboard():
     user_id = st.session_state.user.id
     
     if st.button("🚪 Oturumu Kapat"):
-        supabase.auth.sign_out()
+        try:
+            supabase.auth.sign_out()
+        except Exception:
+            pass
         st.session_state.user = None
         st.session_state.selected_group = None
         st.session_state.pending_group_id = None
@@ -676,65 +591,39 @@ def group_detail():
             m_id = selected_match["id"]
 
             players_res = supabase.table("match_players").select("user_id, custom_name, profiles(full_name)").eq("match_id", m_id).execute()
+            
             player_uids = [p["user_id"] for p in players_res.data if p.get("user_id")]
             player_names = [get_player_display_name(p) for p in players_res.data]
             if not player_names:
-                player_names = ["Oyuncu Bulunamadı"]
+                player_names = ["Henüz Katılımcı Yok"]
 
-            # MAÇA KATIL / AYRIL BUTONU BÖLÜMÜ
+            # MAÇA KATIL / AYRIL BUTONU
             if not is_left:
                 st.markdown("#### 🏃‍♂️ Maç Katılım Durumunuz")
                 col_join_btn, col_join_info = st.columns([1, 3])
                 with col_join_btn:
                     if user_id in player_uids:
                         if st.button("❌ Maçtan Çık", key=f"btn_leave_m_{m_id}", use_container_width=True):
-                            # 1. Oyuncu adını al
                             current_user_name = None
                             user_prof = supabase.table("profiles").select("full_name").eq("id", user_id).execute()
                             if user_prof.data and user_prof.data[0].get("full_name"):
                                 current_user_name = user_prof.data[0]["full_name"]
 
-                            # 2. Veritabanından (match_players) Oyuncuyu Sil
                             supabase.table("match_players").delete().eq("match_id", m_id).eq("user_id", user_id).execute()
                             
-                            # 3. Veritabanındaki TÜM kadro taslaklarından (match_squad_drafts) bu kişiyi temizle
-                            if current_user_name:
-                                all_drafts = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).execute()
-                                if all_drafts.data:
-                                    for d in all_drafts.data:
-                                        t_a = [p for p in d.get("team_a", []) if p != current_user_name]
-                                        t_b = [p for p in d.get("team_b", []) if p != current_user_name]
-                                        supabase.table("match_squad_drafts").update({
-                                            "team_a": t_a,
-                                            "team_b": t_b
-                                        }).eq("id", d["id"]).execute()
+                            if "current_team_a" in st.session_state: del st.session_state["current_team_a"]
+                            if "current_team_b" in st.session_state: del st.session_state["current_team_b"]
 
-                            # 4. Eğer Onaylanmış Resmi Kadro Varsa İptal Et ve Admine Bildirim Gönder
-                            approved_draft = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).eq("is_approved", True).execute()
-                            was_approved = len(approved_draft.data) > 0
-
-                            if was_approved:
-                                supabase.table("match_squad_drafts").update({"is_approved": False}).eq("match_id", m_id).execute()
-
-                            # 5. Session State Üzerindeki Geçici Kadro Seçimlerinden Temizle
-                            if current_user_name:
-                                if "current_team_a" in st.session_state and current_user_name in st.session_state.current_team_a:
-                                    st.session_state.current_team_a.remove(current_user_name)
-                                if "current_team_b" in st.session_state and current_user_name in st.session_state.current_team_b:
-                                    st.session_state.current_team_b.remove(current_user_name)
-
-                            # 6. Bildirim Gönderimi
                             u_name = current_user_name if current_user_name else "Bir üye"
                             create_notification_for_group(group["id"], "🏃‍♂️ Maç Katılımı", f"{u_name} maç kadrosundan ayrıldı.", exclude_user_id=user_id)
-                            
-                            if was_approved:
-                                create_notification_for_group(group["id"], "⚠️ Onaylı Kadro Bozuldu", f"{u_name} maçtan ayrıldığı için onaylanmış kadro iptal edildi. Tekrar onaylamanız gerekiyor.", admin_only=True)
-
                             st.rerun()
                     else:
                         if st.button("✅ Maça Katıl", key=f"btn_join_m_{m_id}", use_container_width=True):
                             supabase.table("match_players").insert({"match_id": m_id, "user_id": user_id}).execute()
                             
+                            if "current_team_a" in st.session_state: del st.session_state["current_team_a"]
+                            if "current_team_b" in st.session_state: del st.session_state["current_team_b"]
+
                             user_prof = supabase.table("profiles").select("full_name").eq("id", user_id).execute()
                             u_name = get_profile_name(user_prof.data[0]) if user_prof.data else "Bir üye"
                             create_notification_for_group(group["id"], "🏃‍♂️ Maç Katılımı", f"{u_name} maça katıldı!", exclude_user_id=user_id)
@@ -743,14 +632,23 @@ def group_detail():
 
             st.write("---")
 
+            # ONAYLANMIŞ RESMİ KADRO KONTROLÜ
             approved_draft = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).eq("is_approved", True).execute()
             
             if approved_draft.data:
-                st.success("🏆 **BU MAÇIN RESMİ KADROSU ADMİN TARAFINDAN ONAYLANDI!**")
+                # ONAYLI KADRO VARSA: SADECE KADRO SEÇENEĞİ/GÖRSELİ EKRANA GELİR
+                st.success("🏆 **BU MAÇIN RESMİ KADROSU İLAN EDİLDİ!**")
                 official = approved_draft.data[0]
                 render_pitch(official["team_a"], official["team_b"])
+                
+                # Admin isterse kadro onayını kaldırabilir/değiştirebilir
+                if group["is_admin"] and not is_left:
+                    if st.button("🔄 Kadro Onayını Kaldır ve Yeniden Düzenle", key=f"unapprove_{official['id']}"):
+                        supabase.table("match_squad_drafts").update({"is_approved": False}).eq("id", official["id"]).execute()
+                        st.rerun()
             else:
-                st.info("💡 Resmi kadro henüz onaylanmadı.")
+                # ONAYLI KADRO YOKSA: KADRO SEÇME VE ÖNERİ ALANLARI GÖSTERİLİR
+                st.info("💡 Resmi kadro henüz ilan edilmedi. Aşağıdan kadro önerisi yapabilir veya kendi taslağınızı oluşturabilirsiniz.")
                 
                 user_draft_res = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).eq("user_id", user_id).execute()
                 saved_draft = user_draft_res.data[0] if user_draft_res.data else None
@@ -775,7 +673,7 @@ def group_detail():
                         else:
                             st.caption("Henüz herhangi bir kullanıcı kadro önerisi göndermedi.")
 
-                if not is_left:
+                if not is_left and player_names != ["Henüz Katılımcı Yok"]:
                     st.markdown("### 🛠️ Kendi Kadro Taslağını Kur")
                     
                     st.markdown("#### 1️⃣ Oyuncu İlişki Şartları")
@@ -786,8 +684,8 @@ def group_detail():
                         st.caption("🤝 Beraber Oynaması İstenen İkililer")
                         for i in range(st.session_state.together_count):
                             c1, c2 = st.columns(2)
-                            p1 = c1.selectbox(f"Birlikte #{i+1} Oyuncu A", player_names, key=f"tog_a_{i}")
-                            p2 = c2.selectbox(f"Birlikte #{i+1} Oyuncu B", player_names, key=f"tog_b_{i}")
+                            p1 = c1.selectbox(f"Birlikte #{i+1} Oyuncu A", player_names, key=f"tog_a_{i}_{m_id}")
+                            p2 = c2.selectbox(f"Birlikte #{i+1} Oyuncu B", player_names, key=f"tog_b_{i}_{m_id}")
                             if p1 != p2:
                                 together_pairs.append([p1, p2])
                         if st.button("➕ Yeni Beraber Oynayacak İkili Ekle"):
@@ -799,8 +697,8 @@ def group_detail():
                         st.caption("⚔️ Ayrı Takımlarda Oynaması İstenen İkililer")
                         for i in range(st.session_state.separate_count):
                             c1, c2 = st.columns(2)
-                            p1 = c1.selectbox(f"Ayrı #{i+1} Oyuncu A", player_names, key=f"sep_a_{i}")
-                            p2 = c2.selectbox(f"Ayrı #{i+1} Oyuncu B", player_names, key=f"sep_b_{i}")
+                            p1 = c1.selectbox(f"Ayrı #{i+1} Oyuncu A", player_names, key=f"sep_a_{i}_{m_id}")
+                            p2 = c2.selectbox(f"Ayrı #{i+1} Oyuncu B", player_names, key=f"sep_b_{i}_{m_id}")
                             if p1 != p2:
                                 separate_pairs.append([p1, p2])
                         if st.button("➕ Yeni Ayrı Oynayacak İkili Ekle"):
@@ -819,18 +717,6 @@ def group_detail():
                         half = len(plist) // 2
                         t_a, t_b = plist[:half], plist[half:]
                         
-                        for p1, p2 in together_pairs:
-                            if p1 in t_a and p2 in t_b:
-                                swap_candidate = [x for x in t_a if x != p1][0] if len(t_a) > 1 else None
-                                if swap_candidate:
-                                    t_a.remove(swap_candidate); t_b.append(swap_candidate)
-                                    t_b.remove(p2); t_a.append(p2)
-                            elif p1 in t_b and p2 in t_a:
-                                swap_candidate = [x for x in t_b if x != p1][0] if len(t_b) > 1 else None
-                                if swap_candidate:
-                                    t_b.remove(swap_candidate); t_a.append(swap_candidate)
-                                    t_a.remove(p2); t_b.append(p2)
-                        
                         st.session_state.current_team_a = t_a
                         st.session_state.current_team_b = t_b
                         st.rerun()
@@ -843,7 +729,7 @@ def group_detail():
                             "🔵 A Takımı Oyuncuları", 
                             options=player_names, 
                             default=[p for p in st.session_state.current_team_a if p in player_names],
-                            key=f"man_select_a_side_{m_id}"
+                            key=f"man_select_a_{m_id}"
                         )
                     
                     remaining_for_b = [p for p in player_names if p not in selected_a]
@@ -853,7 +739,7 @@ def group_detail():
                             "🔴 B Takımı Oyuncuları", 
                             options=remaining_for_b, 
                             default=[p for p in st.session_state.current_team_b if p in remaining_for_b],
-                            key=f"man_select_b_side_{m_id}"
+                            key=f"man_select_b_{m_id}"
                         )
 
                     st.markdown("#### 🏟️ Canlı Kadro Görünümü")
@@ -916,7 +802,7 @@ def group_detail():
                 match_date = st.date_input("Maç Tarihi")
                 location = st.text_input("Halı Saha / Saha Adı", value="Merkez Halı Saha")
                 
-                members_data = supabase.table("group_members").select("user_id, profiles(full_name)").eq("group_id", group["id"]).eq("is_left", False).execute()
+                members_data = supabase.table("group_members").select("user_id, profiles(full_name)").eq("group_id", group["id"]).neq("is_left", True).execute()
                 player_dict = {get_profile_name(m.get("profiles")): m["user_id"] for m in members_data.data}
                 
                 selected_players = st.multiselect("Gruptan Kadroya Alınacak Oyuncular", options=list(player_dict.keys()), default=list(player_dict.keys()))
@@ -970,7 +856,7 @@ def group_detail():
                             st.warning("Lütfen bir isim girin.")
 
     # =========================================================
-    # TAB: GRUP ÜYELERİ & SADECE GRUP PAYLAŞIM LİNKİ
+    # TAB: GRUP ÜYELERİ & DAVET LİNKİ
     # =========================================================
     with tab_members:
         st.subheader("🔗 Gruba Davet Linki")
@@ -1004,7 +890,7 @@ def group_detail():
                         supabase.table("group_members").insert({"group_id": group["id"], "user_id": req["user_id"], "is_admin": False, "is_left": False}).execute()
                         supabase.table("group_join_requests").update({"status": "approved"}).eq("id", req["id"]).execute()
                         
-                        create_notification(req["user_id"], "🎉 Grub Katılımı Onaylandı!", f"'{group['name']}' grubuna katılım isteğiniz onaylandı.")
+                        create_notification(req["user_id"], "🎉 Grup Katılımı Onaylandı!", f"'{group['name']}' grubuna katılım isteğiniz onaylandı.")
 
                         st.success(f"{u_name} gruba eklendi!")
                         st.rerun()
@@ -1032,7 +918,6 @@ def group_detail():
             table_data = [{"Oyuncu": get_player_display_name(p), "Gol": p.get("goals", 0), "Asist": p.get("assists", 0)} for p in players_in_match.data]
             st.table(table_data)
 
-            # GEÇMİŞ MAÇ SOHBET VE MEDYA BÖLÜMÜ
             render_match_chat(selected_match_id, user_id, group["id"], is_left)
         else:
             st.info("Henüz oynanmış geçmiş bir maç bulunmuyor.")
