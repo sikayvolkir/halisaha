@@ -29,15 +29,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# Supabase Bağlantısı
+# Supabase Bağlantısı (Cache Kaldırıldı)
 # ---------------------------------------------------------
-@st.cache_resource
-def init_supabase() -> Client:
+def get_supabase_client() -> Client:
     url = st.secrets["SUPABASE_URL"]
     key = st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
 
-supabase = init_supabase()
+supabase = get_supabase_client()
 
 # Session State Tanımlamaları
 if "user" not in st.session_state:
@@ -111,8 +110,8 @@ def render_top_bar():
             st.rerun()
 
     with col_notif:
-        user_id = st.session_state.user.id
-        notifs_res = supabase.table("notifications").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+        active_user_id = st.session_state.user.id
+        notifs_res = supabase.table("notifications").select("*").eq("user_id", active_user_id).order("created_at", desc=True).execute()
         notifs = notifs_res.data if notifs_res.data else []
         
         count_label = f"🔔 Bildirimler ({len(notifs)})" if notifs else "🔔 Bildirimler"
@@ -122,7 +121,7 @@ def render_top_bar():
             
             if notifs:
                 if st.button("🗑️ Tümünü Temizle", use_container_width=True, key="clear_all_notifs"):
-                    supabase.table("notifications").delete().eq("user_id", user_id).execute()
+                    supabase.table("notifications").delete().eq("user_id", active_user_id).execute()
                     st.rerun()
                 st.divider()
 
@@ -225,6 +224,7 @@ def render_match_chat(match_id, user_id, group_id, is_left):
                         elif file_ext in ["mp4", "mov"]:
                             media_type = "video"
 
+                    # Doğrudan Aktif Oturumdaki Kullanıcı ID'si Kullanılıyor
                     current_active_user_id = st.session_state.user.id
 
                     supabase.table("match_messages").insert({
@@ -339,9 +339,11 @@ def auth_screen():
             if submit_login:
                 try:
                     res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                    st.session_state.user = res.user
-                    st.success("Giriş başarılı!")
-                    st.rerun()
+                    if res.user:
+                        st.session_state.user = res.user
+                        st.session_state.selected_group = None
+                        st.success("Giriş başarılı!")
+                        st.rerun()
                 except Exception as e:
                     st.error(f"Giriş başarısız: {e}")
 
@@ -366,6 +368,7 @@ def auth_screen():
                         if res.user:
                             supabase.table("profiles").upsert({"id": res.user.id, "full_name": full_name}).execute()
                             st.session_state.user = res.user
+                            st.session_state.selected_group = None
                             st.success("Kayıt başarılı!")
                             st.rerun()
                     except Exception as e:
@@ -636,18 +639,15 @@ def group_detail():
             approved_draft = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).eq("is_approved", True).execute()
             
             if approved_draft.data:
-                # ONAYLI KADRO VARSA: SADECE KADRO SEÇENEĞİ/GÖRSELİ EKRANA GELİR
                 st.success("🏆 **BU MAÇIN RESMİ KADROSU İLAN EDİLDİ!**")
                 official = approved_draft.data[0]
                 render_pitch(official["team_a"], official["team_b"])
                 
-                # Admin isterse kadro onayını kaldırabilir/değiştirebilir
                 if group["is_admin"] and not is_left:
                     if st.button("🔄 Kadro Onayını Kaldır ve Yeniden Düzenle", key=f"unapprove_{official['id']}"):
                         supabase.table("match_squad_drafts").update({"is_approved": False}).eq("id", official["id"]).execute()
                         st.rerun()
             else:
-                # ONAYLI KADRO YOKSA: KADRO SEÇME VE ÖNERİ ALANLARI GÖSTERİLİR
                 st.info("💡 Resmi kadro henüz ilan edilmedi. Aşağıdan kadro önerisi yapabilir veya kendi taslağınızı oluşturabilirsiniz.")
                 
                 user_draft_res = supabase.table("match_squad_drafts").select("*").eq("match_id", m_id).eq("user_id", user_id).execute()
