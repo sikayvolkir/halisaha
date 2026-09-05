@@ -23,10 +23,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- SUPABASE BAĞLANTISI (Doğrudan veya Secrets Üzerinden) ---
+# --- SUPABASE BAĞLANTISI ---
 @st.cache_resource
 def init_supabase() -> Client:
-    # Secrets varsa oradan alır, yoksa verdiğin canlı bağlantı bilgilerini kullanır
     url = st.secrets.get("SUPABASE_URL", "https://zgqleiaruawtvjkwwsto.supabase.co")
     key = st.secrets.get("SUPABASE_KEY", "sb_publishable_D0iOA6CpxnbLd-mLhyFIKw_UxMNIm9-")
     return create_client(url, key)
@@ -67,7 +66,6 @@ try:
     res_emanet = supabase.table("kitaplar").select("id", count="exact").eq("durum", "Emanette").execute()
     emanette_kitap = res_emanet.count if res_emanet.count is not None else 0
 except Exception as err:
-    st.warning(f"Metrikler okunamadı (RLS engeli veya boş tablo olabilir): {err}")
     toplam_kitap = 0
     emanette_kitap = 0
 
@@ -134,7 +132,7 @@ with tab_ekle:
                     st.session_state["bildirim"] = ("success", f"📚 '{kaydedilecek_ad}' kütüphaneye başarıyla eklendi!")
                     st.rerun()
             except Exception as insert_err:
-                st.error(f"🚨 Kayıt Ekleme Hatası (RLS Kapalı mı?): {insert_err}")
+                st.error(f"🚨 Kayıt Ekleme Hatası: {insert_err}")
         else:
             st.warning("Lütfen Kitap Adı ve Yazar alanlarını doldurun.")
 
@@ -304,7 +302,7 @@ with tab_liste:
     else:
         st.info("Kriterlere uygun kitap bulunamadı.")
 
-# --- 3. SEKME: EMANET İŞLEMLERİ (ÖNEMLİ HATA DENETİMLİ KISIM) ---
+# --- 3. SEKME: EMANET İŞLEMLERİ ---
 with tab_emanet:
     st.subheader("📲 Emanet / Teslim İşlemleri")
 
@@ -404,14 +402,15 @@ with tab_emanet:
                 else:
                     st.warning("Görselde QR kod algılanamadı.")
             except ImportError:
-                st.info("💡 Otomatik QR taraması için 'opencv-python-headless' gereklidir.")
+                st.info("💡 Otomatik QR taraması için opencv-python-headless gereklidir.")
+            except Exception as e:
+                st.error(f"Kamera hatası: {e}")
 
     st.markdown("---")
     kisi_adi = ""
     if islem_tipi == "Emanet Ver":
         kisi_adi = st.text_input("Emanet Edilecek Kişinin Adı Soyadı:", key=f"kisi_adi_{ek_key}")
 
-    # GÜNCELLEME İŞLEMİ (AÇIK DETAY HATA YAKALAMA İLE)
     if st.button("İşlemi Onayla ve Kaydet", use_container_width=True, key=f"btn_onayla_{ek_key}"):
         target_id = st.session_state.get("selected_kitap_id")
 
@@ -420,8 +419,6 @@ with tab_emanet:
         else:
             try:
                 t_id = int(target_id)
-                
-                # Kitabın veritabanındaki durumunu çekelim
                 res_target = supabase.table("kitaplar").select("*").eq("id", t_id).execute()
                 
                 if not res_target.data:
@@ -438,8 +435,7 @@ with tab_emanet:
                         elif not kisi_adi.strip():
                             st.warning("Lütfen emanet alan kişinin adını girin.")
                         else:
-                            # Güncelleme Sorgusu
-                            up_res = supabase.table("kitaplar").update({
+                            supabase.table("kitaplar").update({
                                 "durum": "Emanette",
                                 "emanet_alan": kisi_adi.strip()
                             }).eq("id", t_id).execute()
@@ -451,8 +447,7 @@ with tab_emanet:
                         if mevc_durum == "Kütüphanede":
                             st.warning(f"ℹ️ '{ad}' kitabı zaten kütüphanede.")
                         else:
-                            # Güncelleme Sorgusu
-                            up_res = supabase.table("kitaplar").update({
+                            supabase.table("kitaplar").update({
                                 "durum": "Kütüphanede",
                                 "emanet_alan": ""
                             }).eq("id", t_id).execute()
@@ -462,5 +457,4 @@ with tab_emanet:
                             st.rerun()
 
             except Exception as err:
-                # Supabase tarafındaki yetki/RLS veya veri tipi hataları doğrudan ekrana düşer
                 st.error(f"🚨 SUPABASE / VERİTABANI HATASI DETAYI:\n{str(err)}")
