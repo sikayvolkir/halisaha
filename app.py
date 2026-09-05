@@ -3,7 +3,6 @@ import io
 import urllib.parse
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 from supabase import create_client, Client
 
 st.set_page_config(page_title="Kütüphane Yönetimi", page_icon="📚", layout="centered")
@@ -24,14 +23,19 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- SUPABASE BAĞLANTISI ---
+# --- SUPABASE BAĞLANTISI (Doğrudan veya Secrets Üzerinden) ---
 @st.cache_resource
 def init_supabase() -> Client:
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
+    # Secrets varsa oradan alır, yoksa verdiğin canlı bağlantı bilgilerini kullanır
+    url = st.secrets.get("SUPABASE_URL", "https://zgqleiaruawtvjkwwsto.supabase.co")
+    key = st.secrets.get("SUPABASE_KEY", "sb_publishable_D0iOA6CpxnbLd-mLhyFIKw_UxMNIm9-")
     return create_client(url, key)
 
-supabase = init_supabase()
+try:
+    supabase = init_supabase()
+except Exception as e:
+    st.error(f"Supabase Bağlantı Hatası: {e}")
+    st.stop()
 
 # --- SESSION STATE VE BİLDİRİM YÖNETİMİ ---
 if "form_key" not in st.session_state: st.session_state["form_key"] = 0
@@ -53,7 +57,7 @@ def emanet_sifirla():
     st.session_state["selected_kitap_id"] = None
     st.session_state["emanet_key"] += 1
 
-# --- BAŞLIK VE ÖZETLER ---
+# --- BAŞLIK VE ÖZET METRİKLER ---
 st.title("📚 Kütüphane Yönetim Sistemi")
 
 try:
@@ -62,7 +66,8 @@ try:
     
     res_emanet = supabase.table("kitaplar").select("id", count="exact").eq("durum", "Emanette").execute()
     emanette_kitap = res_emanet.count if res_emanet.count is not None else 0
-except Exception:
+except Exception as err:
+    st.warning(f"Metrikler okunamadı (RLS engeli veya boş tablo olabilir): {err}")
     toplam_kitap = 0
     emanette_kitap = 0
 
@@ -112,21 +117,24 @@ with tab_ekle:
         kaydedilecek_ad = y_ad.strip()
 
         if kaydedilecek_ad and kaydedilecek_yazar:
-            check_res = supabase.table("kitaplar").select("id").ilike("ad", kaydedilecek_ad).ilike("yazar", kaydedilecek_yazar).execute()
-            if check_res.data:
-                st.error(f"⚠️ '{kaydedilecek_ad}' isimli kitap zaten kayıtlı!")
-            else:
-                supabase.table("kitaplar").insert({
-                    "ad": kaydedilecek_ad,
-                    "yazar": kaydedilecek_yazar,
-                    "kategori": y_kat,
-                    "durum": "Kütüphanede",
-                    "emanet_alan": "",
-                    "okundu_durum": "Okunmadı"
-                }).execute()
-                st.session_state["form_key"] += 1
-                st.session_state["bildirim"] = ("success", f"📚 '{kaydedilecek_ad}' kütüphaneye başarıyla eklendi!")
-                st.rerun()
+            try:
+                check_res = supabase.table("kitaplar").select("id").ilike("ad", kaydedilecek_ad).ilike("yazar", kaydedilecek_yazar).execute()
+                if check_res.data:
+                    st.error(f"⚠️ '{kaydedilecek_ad}' isimli kitap zaten kayıtlı!")
+                else:
+                    supabase.table("kitaplar").insert({
+                        "ad": kaydedilecek_ad,
+                        "yazar": kaydedilecek_yazar,
+                        "kategori": y_kat,
+                        "durum": "Kütüphanede",
+                        "emanet_alan": "",
+                        "okundu_durum": "Okunmadı"
+                    }).execute()
+                    st.session_state["form_key"] += 1
+                    st.session_state["bildirim"] = ("success", f"📚 '{kaydedilecek_ad}' kütüphaneye başarıyla eklendi!")
+                    st.rerun()
+            except Exception as insert_err:
+                st.error(f"🚨 Kayıt Ekleme Hatası (RLS Kapalı mı?): {insert_err}")
         else:
             st.warning("Lütfen Kitap Adı ve Yazar alanlarını doldurun.")
 
@@ -137,7 +145,7 @@ with tab_liste:
 
     try:
         res_exp = supabase.table("kitaplar").select("kategori, ad, yazar, durum, emanet_alan, okundu_durum").order("id", desc=True).execute()
-        tum_kitaplar_raw = res_exp.data
+        tum_kitaplar_raw = res_exp.data if res_exp.data else []
     except Exception:
         tum_kitaplar_raw = []
 
@@ -216,7 +224,7 @@ with tab_liste:
                             st.session_state["bildirim"] = ("success", f"🎉 {len(ekler)} kitap aktarıldı, {atlanan} mükerrer atlandı.")
                             st.rerun()
                 except Exception as e:
-                    st.error(f"Hata oluştu: {e}")
+                    st.error(f"İçe Aktarma Hatası: {e}")
 
     with st.expander("🔍 Detaylı Filtreleme ve Arama", expanded=False):
         col1, col2 = st.columns(2)
@@ -247,12 +255,13 @@ with tab_liste:
     try:
         res_k = query.order("id", desc=True).execute()
         kitaplar = res_k.data if res_k.data else []
-    except Exception:
+    except Exception as err:
+        st.error(f"Kitaplar Listelenemedi: {err}")
         kitaplar = []
 
     if arama_metin:
         a_met = arama_metin.lower()
-        kitaplar = [k for k in kitaplar if a_met in k["ad"].lower() or a_met in k["yazar"].lower()]
+        kitaplar = [k for k in kitaplar if a_met in str(k.get("ad", "")).lower() or a_met in str(k.get("yazar", "")).lower()]
 
     st.divider()
 
@@ -271,15 +280,21 @@ with tab_liste:
                     is_okundu = bool(str(k_okundu) == "Okundu")
                     btn_label = "✅ Okundu (Okunmadı Yap)" if is_okundu else "📖 Okunmadı (Okundu Yap)"
                     if st.button(btn_label, key=f"btn_okundu_{k_id}", use_container_width=True):
-                        yeni_durum = "Okunmadı" if is_okundu else "Okundu"
-                        supabase.table("kitaplar").update({"okundu_durum": yeni_durum}).eq("id", int(k_id)).execute()
-                        st.session_state["bildirim"] = ("success", f"#{k_id} ID'li kitabın durumu güncellendi.")
-                        st.rerun()
+                        try:
+                            yeni_durum = "Okunmadı" if is_okundu else "Okundu"
+                            supabase.table("kitaplar").update({"okundu_durum": yeni_durum}).eq("id", int(k_id)).execute()
+                            st.session_state["bildirim"] = ("success", f"#{k_id} ID'li kitabın durumu güncellendi.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Güncelleme Hatası: {e}")
 
                     if st.button("🗑️ Kitabı Sil", key=f"btn_sil_{k_id}", use_container_width=True):
-                        supabase.table("kitaplar").delete().eq("id", int(k_id)).execute()
-                        st.session_state["bildirim"] = ("success", f"🗑️ '{k_ad}' kütüphaneden silindi.")
-                        st.rerun()
+                        try:
+                            supabase.table("kitaplar").delete().eq("id", int(k_id)).execute()
+                            st.session_state["bildirim"] = ("success", f"🗑️ '{k_ad}' kütüphaneden silindi.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Silme Hatası: {e}")
 
                 with col_qr:
                     qr_data = str(k_id)
@@ -289,7 +304,7 @@ with tab_liste:
     else:
         st.info("Kriterlere uygun kitap bulunamadı.")
 
-# --- 3. SEKME: EMANET İŞLEMLERİ ---
+# --- 3. SEKME: EMANET İŞLEMLERİ (ÖNEMLİ HATA DENETİMLİ KISIM) ---
 with tab_emanet:
     st.subheader("📲 Emanet / Teslim İşlemleri")
 
@@ -309,10 +324,13 @@ with tab_emanet:
                     st.write(f"**Tür:** {ek_kat}")
                     st.write(f"**Emanet Alan Kişi:** {ek_alan}")
                     if st.button("📥 Kütüphaneye Geri Al", key=f"btn_list_geri_al_{ek_id}", use_container_width=True):
-                        supabase.table("kitaplar").update({"durum": "Kütüphanede", "emanet_alan": ""}).eq("id", int(ek_id)).execute()
-                        st.session_state["bildirim"] = ("success", f"✅ '{ek_ad}' kütüphaneye geri alındı!")
-                        emanet_sifirla()
-                        st.rerun()
+                        try:
+                            supabase.table("kitaplar").update({"durum": "Kütüphanede", "emanet_alan": ""}).eq("id", int(ek_id)).execute()
+                            st.session_state["bildirim"] = ("success", f"✅ '{ek_ad}' kütüphaneye geri alındı!")
+                            emanet_sifirla()
+                            st.rerun()
+                        except Exception as err:
+                            st.error(f"Geri Alma Hatası: {err}")
         else:
             st.info("Şu an emanette hiçbir kitap bulunmuyor.")
 
@@ -327,7 +345,8 @@ with tab_emanet:
         else:
             res_u = supabase.table("kitaplar").select("id, ad, emanet_alan").eq("durum", "Emanette").order("ad").execute()
         uygun_kitaplar = res_u.data if res_u.data else []
-    except Exception:
+    except Exception as err:
+        st.error(f"Filtreli Liste Çekilemedi: {err}")
         uygun_kitaplar = []
 
     options_dict = {}
@@ -355,7 +374,6 @@ with tab_emanet:
         else:
             st.info("Şu an emanette kitap bulunmuyor.")
 
-    # --- MANUEL VE GÖRSEL KAMERA İLE KİTAP ID SEÇİMİ ---
     col_id1, col_id2 = st.columns(2)
     with col_id1:
         manual_id_input = st.number_input("Manuel Kitap ID Gir:", min_value=1, step=1, key=f"manual_id_{ek_key}")
@@ -382,54 +400,67 @@ with tab_emanet:
                         st.toast(f"🎯 QR Okundu! Seçilen ID: #{parsed_id}")
                         st.rerun()
                     else:
-                        st.warning("QR Okundu ancak geçerli bir ID (sayı) bulunamadı.")
+                        st.warning("QR Okundu ancak sayısal ID bulunamadı.")
                 else:
                     st.warning("Görselde QR kod algılanamadı.")
             except ImportError:
-                st.info("💡 Otomatik QR görsel taraması için 'opencv-python-headless' paketi gereklidir.")
+                st.info("💡 Otomatik QR taraması için 'opencv-python-headless' gereklidir.")
 
     st.markdown("---")
     kisi_adi = ""
     if islem_tipi == "Emanet Ver":
         kisi_adi = st.text_input("Emanet Edilecek Kişinin Adı Soyadı:", key=f"kisi_adi_{ek_key}")
 
+    # GÜNCELLEME İŞLEMİ (AÇIK DETAY HATA YAKALAMA İLE)
     if st.button("İşlemi Onayla ve Kaydet", use_container_width=True, key=f"btn_onayla_{ek_key}"):
         target_id = st.session_state.get("selected_kitap_id")
 
         if target_id is None:
-            st.session_state["bildirim"] = ("error", "Lütfen işlem yapılacak bir kitap seçin veya ID girin.")
-            st.rerun()
+            st.error("Lütfen bir kitap seçin veya ID girin.")
         else:
             try:
-                # TAMSAYI DÖNÜŞÜMÜ GARANTİSİ
-                target_id_int = int(target_id)
-                res_target = supabase.table("kitaplar").select("id, ad, yazar, durum, emanet_alan").eq("id", target_id_int).execute()
-                kitap = res_target.data[0] if res_target.data else None
-            except Exception as e:
-                kitap = None
-
-            if not kitap:
-                st.session_state["bildirim"] = ("error", f"#{target_id} ID'li bir kitap veritabanında bulunamadı.")
-                st.rerun()
-            else:
-                k_id, ad, yazar, mevc_durum, mevc_emanet = kitap["id"], kitap["ad"], kitap["yazar"], kitap["durum"], kitap["emanet_alan"]
-                if islem_tipi == "Emanet Ver":
-                    if mevc_durum == "Emanette":
-                        st.session_state["bildirim"] = ("error", f"⚠️ '{ad}' kitabı zaten '{mevc_emanet}' kişisinde emanette!")
-                        st.rerun()
-                    elif not kisi_adi.strip():
-                        st.warning("Lütfen emanet alacak kişinin adını girin.")
-                    else:
-                        supabase.table("kitaplar").update({"durum": "Emanette", "emanet_alan": kisi_adi.strip()}).eq("id", int(k_id)).execute()
-                        st.session_state["bildirim"] = ("success", f"✅ '{ad}' kitabı {kisi_adi.strip()} kişisine emanet edildi!")
-                        emanet_sifirla()
-                        st.rerun()
+                t_id = int(target_id)
+                
+                # Kitabın veritabanındaki durumunu çekelim
+                res_target = supabase.table("kitaplar").select("*").eq("id", t_id).execute()
+                
+                if not res_target.data:
+                    st.error(f"❌ Veritabanında #{t_id} ID'li satır bulunamadı!")
                 else:
-                    if mevc_durum == "Kütüphanede":
-                        st.session_state["bildirim"] = ("error", f"ℹ️ '{ad}' kitabı zaten kütüphanede bulunuyor.")
-                        st.rerun()
+                    kitap = res_target.data[0]
+                    mevc_durum = kitap.get("durum")
+                    mevc_emanet = kitap.get("emanet_alan")
+                    ad = kitap.get("ad")
+
+                    if islem_tipi == "Emanet Ver":
+                        if mevc_durum == "Emanette":
+                            st.warning(f"⚠️ '{ad}' kitabı zaten '{mevc_emanet}' kişisinde emanette!")
+                        elif not kisi_adi.strip():
+                            st.warning("Lütfen emanet alan kişinin adını girin.")
+                        else:
+                            # Güncelleme Sorgusu
+                            up_res = supabase.table("kitaplar").update({
+                                "durum": "Emanette",
+                                "emanet_alan": kisi_adi.strip()
+                            }).eq("id", t_id).execute()
+                            
+                            st.session_state["bildirim"] = ("success", f"✅ '{ad}' kitabı {kisi_adi.strip()} kişisine emanet edildi!")
+                            emanet_sifirla()
+                            st.rerun()
                     else:
-                        supabase.table("kitaplar").update({"durum": "Kütüphanede", "emanet_alan": ""}).eq("id", int(k_id)).execute()
-                        st.session_state["bildirim"] = ("success", f"✅ '{ad}' kitabı kütüphaneye geri alındı!")
-                        emanet_sifirla()
-                        st.rerun()
+                        if mevc_durum == "Kütüphanede":
+                            st.warning(f"ℹ️ '{ad}' kitabı zaten kütüphanede.")
+                        else:
+                            # Güncelleme Sorgusu
+                            up_res = supabase.table("kitaplar").update({
+                                "durum": "Kütüphanede",
+                                "emanet_alan": ""
+                            }).eq("id", t_id).execute()
+                            
+                            st.session_state["bildirim"] = ("success", f"✅ '{ad}' kitabı teslim alındı!")
+                            emanet_sifirla()
+                            st.rerun()
+
+            except Exception as err:
+                # Supabase tarafındaki yetki/RLS veya veri tipi hataları doğrudan ekrana düşer
+                st.error(f"🚨 SUPABASE / VERİTABANI HATASI DETAYI:\n{str(err)}")
