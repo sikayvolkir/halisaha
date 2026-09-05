@@ -1,3 +1,4 @@
+import os
 import io
 import urllib.parse
 import pandas as pd
@@ -31,6 +32,55 @@ def init_supabase() -> Client:
     return create_client(url, key)
 
 supabase = init_supabase()
+
+# --- CAMERA / QR JAVASCRIPT KODU ---
+SCANNER_HTML = r"""
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<div style="width:100%; max-width:400px; margin:auto; text-align:center;">
+  <video id="v" style="width:100%; border-radius:10px; background:#000;" autoplay playsinline muted></video>
+  <canvas id="c" style="display:none;"></canvas>
+  <div id="st" style="margin-top:6px; font-weight:bold; color:#4A5335;">Kamera Açılıyor...</div>
+</div>
+<script>
+const video = document.getElementById("v");
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const stDiv = document.getElementById("st");
+let active = true;
+
+navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+.then(function(stream) {
+  video.srcObject = stream;
+  video.setAttribute("playsinline", true);
+  video.play();
+  stDiv.innerText = "QR Kodu Hizalayın...";
+  requestAnimationFrame(scan);
+})
+.catch(function(err) {
+  stDiv.innerText = "Kamera Başlatılamadı!";
+});
+
+function scan() {
+  if (!active) return;
+  if (video.readyState === video.HAVE_ENOUGH_DATA) {
+    canvas.height = video.videoHeight;
+    canvas.width = video.videoWidth;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    var imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    var code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: "dontInvert" });
+    if (code && code.data) {
+      var digits = code.data.replace(/[^0-9]/g, "");
+      if (digits) {
+        active = false;
+        stDiv.innerText = "Okundu: ID #" + digits;
+        window.parent.postMessage({type: "streamlit:setComponentValue", value: digits}, "*");
+      }
+    }
+  }
+  if (active) { requestAnimationFrame(scan); }
+}
+</script>
+"""
 
 # --- BAŞLIK VE ÖZETLER ---
 st.title("📚 Kütüphane Yönetim Sistemi")
@@ -352,55 +402,7 @@ with tab_emanet:
 
         st.caption("📷 Arka kamera ile QR kod taranıyor...")
 
-        scanner_html = """
-        <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-        <div style="width:100%; max-width:400px; margin:auto; text-align:center;">
-          <video id="v" style="width:100%; border-radius:10px; background:#000;" autoplay playsinline muted></video>
-          <canvas id="c" style="display:none;"></canvas>
-          <div id="st" style="margin-top:6px; font-weight:bold; color:#4A5335;">Kamera Açılıyor...</div>
-        </div>
-        <script>
-        const video = document.getElementById("v");
-        const canvas = document.getElementById("c");
-        const ctx = canvas.getContext("2d");
-        const stDiv = document.getElementById("st");
-        let active = true;
-
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-        .then(function(stream) {
-          video.srcObject = stream;
-          video.setAttribute("playsinline", true);
-          video.play();
-          stDiv.innerText = "QR Kodu Hizalayın...";
-          requestAnimationFrame(scan);
-        })
-        .catch(function(err) {
-          stDiv.innerText = "Kamera Başlatılamadı!";
-        });
-
-        function scan() {
-          if (!active) return;
-          if (video.readyState === video.HAVE_ENOUGH_DATA) {
-            canvas.height = video.videoHeight;
-            canvas.width = video.videoWidth;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            var imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            var code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: "dontInvert" });
-            if (code && code.data) {
-              var digits = code.data.replace(/[^0-9]/g, "");
-              if (digits) {
-                active = false;
-                stDiv.innerText = "Okundu: ID #" + digits;
-                window.parent.postMessage({type: "streamlit:setComponentValue", value: digits}, "*");
-              }
-            }
-          }
-          if (active) { requestAnimationFrame(scan); }
-        }
-        </script>
-        """
-        
-        scanned_val = components.html(scanner_html, height=340)
+        scanned_val = components.html(SCANNER_HTML, height=340)
         
         if scanned_val is not None:
             try:
