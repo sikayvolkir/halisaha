@@ -374,8 +374,7 @@ with tab_emanet:
           stDiv.innerText = "QR Kodu Hizalayın...";
           requestAnimationFrame(scan);
         })
-        .catch(function(err) {
-          stDiv.innerText = "Kamera Başlatılamadı!";
+        .catch(function(err) {stDiv.innerText = "Kamera Başlatılamadı!";
         });
 
         function scan() {
