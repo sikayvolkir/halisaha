@@ -33,54 +33,25 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# --- CAMERA / QR JAVASCRIPT KODU ---
-SCANNER_HTML = r"""
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-<div style="width:100%; max-width:400px; margin:auto; text-align:center;">
-  <video id="v" style="width:100%; border-radius:10px; background:#000;" autoplay playsinline muted></video>
-  <canvas id="c" style="display:none;"></canvas>
-  <div id="st" style="margin-top:6px; font-weight:bold; color:#4A5335;">Kamera Açılıyor...</div>
-</div>
-<script>
-const video = document.getElementById("v");
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
-const stDiv = document.getElementById("st");
-let active = true;
+# --- SESSION STATE VE BİLDİRİM YÖNETİMİ ---
+if "form_key" not in st.session_state: st.session_state["form_key"] = 0
+if "emanet_key" not in st.session_state: st.session_state["emanet_key"] = 0
+if "selected_kitap_id" not in st.session_state: st.session_state["selected_kitap_id"] = None
+if "bildirim" not in st.session_state: st.session_state["bildirim"] = None
 
-navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-.then(function(stream) {
-  video.srcObject = stream;
-  video.setAttribute("playsinline", true);
-  video.play();
-  stDiv.innerText = "QR Kodu Hizalayın...";
-  requestAnimationFrame(scan);
-})
-.catch(function(err) {
-  stDiv.innerText = "Kamera Başlatılamadı!";
-});
+if st.session_state["bildirim"]:
+    b_tip, b_mesaj = st.session_state["bildirim"]
+    if b_tip == "success":
+        st.success(b_mesaj)
+        st.toast(b_mesaj, icon="✅")
+    elif b_tip == "error":
+        st.error(b_mesaj)
+        st.toast(b_mesaj, icon="⚠️")
+    st.session_state["bildirim"] = None
 
-function scan() {
-  if (!active) return;
-  if (video.readyState === video.HAVE_ENOUGH_DATA) {
-    canvas.height = video.videoHeight;
-    canvas.width = video.videoWidth;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    var imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    var code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: "dontInvert" });
-    if (code && code.data) {
-      var digits = code.data.replace(/[^0-9]/g, "");
-      if (digits) {
-        active = false;
-        stDiv.innerText = "Okundu: ID #" + digits;
-        window.parent.postMessage({type: "streamlit:setComponentValue", value: digits}, "*");
-      }
-    }
-  }
-  if (active) { requestAnimationFrame(scan); }
-}
-</script>
-"""
+def emanet_sifirla():
+    st.session_state["selected_kitap_id"] = None
+    st.session_state["emanet_key"] += 1
 
 # --- BAŞLIK VE ÖZETLER ---
 st.title("📚 Kütüphane Yönetim Sistemi")
@@ -101,39 +72,23 @@ m_col2.metric(label="🔴 Emanetteki Kitap Sayısı", value=emanette_kitap)
 
 st.divider()
 
-# --- SESSION STATE VE BİLDİRİM YÖNETİMİ ---
-if "form_key" not in st.session_state: st.session_state["form_key"] = 0
-if "emanet_key" not in st.session_state: st.session_state["emanet_key"] = 0
-if "kamera_acik" not in st.session_state: st.session_state["kamera_acik"] = False
-if "selected_kitap_id" not in st.session_state: st.session_state["selected_kitap_id"] = None
-if "bildirim" not in st.session_state: st.session_state["bildirim"] = None
-
-if st.session_state["bildirim"]:
-    b_tip, b_mesaj = st.session_state["bildirim"]
-    if b_tip == "success":
-        st.success(b_mesaj)
-        st.toast(b_mesaj, icon="✅")
-    elif b_tip == "error":
-        st.error(b_mesaj)
-        st.toast(b_mesaj, icon="⚠️")
-    st.session_state["bildirim"] = None
-
-def emanet_sifirla():
-    st.session_state["kamera_acik"] = False
-    st.session_state["selected_kitap_id"] = None
-    st.session_state["emanet_key"] += 1
-
 tab_ekle, tab_liste, tab_emanet = st.tabs(["➕ Yeni Kitap Ekle", "📖 Kitap Listesi & Filtreler", "📲 Emanet İşlemleri"])
 
 # --- 1. SEKME: YENİ KİTAP EKLE ---
 with tab_ekle:
     st.subheader("Sisteme Yeni Kitap Ekle")
     
-    res_kat = supabase.table("kategoriler").select("ad").order("ad").execute()
-    kategori_listesi = [row["ad"] for row in res_kat.data] if res_kat.data else []
+    try:
+        res_kat = supabase.table("kategoriler").select("ad").order("ad").execute()
+        kategori_listesi = [row["ad"] for row in res_kat.data] if res_kat.data else []
+    except Exception:
+        kategori_listesi = []
     
-    res_yazar = supabase.table("kitaplar").select("yazar").neq("yazar", "").execute()
-    mevcut_yazarlar = sorted(list(set([row["yazar"] for row in res_yazar.data if row.get("yazar")]))) if res_yazar.data else []
+    try:
+        res_yazar = supabase.table("kitaplar").select("yazar").neq("yazar", "").execute()
+        mevcut_yazarlar = sorted(list(set([row["yazar"] for row in res_yazar.data if row.get("yazar")]))) if res_yazar.data else []
+    except Exception:
+        mevcut_yazarlar = []
 
     fk = st.session_state["form_key"]
     y_ad = st.text_input("Kitap Adı:", key=f"kitap_adi_{fk}")
@@ -146,7 +101,7 @@ with tab_ekle:
             st.caption("💡 Otomatik Tahminler:")
             cols = st.columns(min(len(tahminler), 3))
             for idx, t_yazar in enumerate(tahminler[:3]):
-                if cols[idx % 3].button(t_yazar, key=f"tahmin_{idx}"):
+                if cols[idx % 3].button(t_yazar, key=f"tahmin_{idx}_{fk}"):
                     st.session_state[f"yazar_adi_{fk}"] = t_yazar
                     st.rerun()
 
@@ -227,7 +182,7 @@ with tab_liste:
                             mevcut_set = set([(r["ad"].lower(), r["yazar"].lower()) for r in res_m.data]) if res_m.data else set()
                             
                             ekler = []
-                            kategoriler_to_add = set()
+                            kategori_set = set()
                             atlanan = 0
                             yasakli_kelimeler = ["isim", "kitap adı", "kitap adi", "ad", "title", "yazar", "kategori", "tür", "durum", "emanet alan", "okunma durumu"]
 
@@ -245,13 +200,13 @@ with tab_liste:
                                             "ad": ad, "yazar": yazar, "kategori": kategori,
                                             "durum": "Kütüphanede", "emanet_alan": "", "okundu_durum": "Okunmadı"
                                         })
-                                        kategoriler_to_add.add(kategori)
+                                        kategori_set.add(kategori)
                                         mevcut_set.add((ad.lower(), yazar.lower()))
 
-                            if kategoriler_to_add:
+                            if kategori_set:
                                 res_k = supabase.table("kategoriler").select("ad").execute()
                                 mevc_kats = set([r["ad"] for r in res_k.data]) if res_k.data else set()
-                                yeni_kats = [{"ad": k} for k in kategoriler_to_add if k not in mevc_kats]
+                                yeni_kats = [{"ad": k} for k in kategori_set if k not in mevc_kats]
                                 if yeni_kats:
                                     supabase.table("kategoriler").insert(yeni_kats).execute()
 
@@ -267,13 +222,20 @@ with tab_liste:
         col1, col2 = st.columns(2)
         with col1: arama_metin = st.text_input("Kitap / Yazar Ara")
         with col2:
-            res_tur = supabase.table("kategoriler").select("ad").order("ad").execute()
-            turler_filtre = ["Tümü"] + ([row["ad"] for row in res_tur.data] if res_tur.data else [])
+            try:
+                res_tur = supabase.table("kategoriler").select("ad").order("ad").execute()
+                turler_filtre = ["Tümü"] + ([row["ad"] for row in res_tur.data] if res_tur.data else [])
+            except Exception:
+                turler_filtre = ["Tümü"]
             f_tur = st.selectbox("Tür Filtresi", turler_filtre)
+            
         col3, col4 = st.columns(2)
         with col3:
-            res_yaz = supabase.table("kitaplar").select("yazar").neq("yazar", "").execute()
-            yazarlar_filtre = ["Tümü"] + sorted(list(set([row["yazar"] for row in res_yaz.data]))) if res_yaz.data else ["Tümü"]
+            try:
+                res_yaz = supabase.table("kitaplar").select("yazar").neq("yazar", "").execute()
+                yazarlar_filtre = ["Tümü"] + sorted(list(set([row["yazar"] for row in res_yaz.data]))) if res_yaz.data else ["Tümü"]
+            except Exception:
+                yazarlar_filtre = ["Tümü"]
             f_yazar = st.selectbox("Yazar Filtresi", yazarlar_filtre)
         with col4: f_okundu = st.selectbox("Okunma Durumu", ["Tümü", "Okundu", "Okunmadı"])
 
@@ -282,8 +244,11 @@ with tab_liste:
     if f_yazar != "Tümü": query = query.eq("yazar", f_yazar)
     if f_okundu != "Tümü": query = query.eq("okundu_durum", f_okundu)
 
-    res_k = query.order("id", desc=True).execute()
-    kitaplar = res_k.data if res_k.data else []
+    try:
+        res_k = query.order("id", desc=True).execute()
+        kitaplar = res_k.data if res_k.data else []
+    except Exception:
+        kitaplar = []
 
     if arama_metin:
         a_met = arama_metin.lower()
@@ -317,7 +282,7 @@ with tab_liste:
                         st.rerun()
 
                 with col_qr:
-                    qr_data = f"KITAP_ID:{k_id}"
+                    qr_data = f"{k_id}"
                     encoded_qr_data = urllib.parse.quote(qr_data)
                     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={encoded_qr_data}"
                     st.image(qr_url, caption=f"ID: #{k_id}", width=150)
@@ -328,8 +293,11 @@ with tab_liste:
 with tab_emanet:
     st.subheader("📲 Emanet / Teslim İşlemleri")
 
-    res_emanette = supabase.table("kitaplar").select("id, ad, yazar, kategori, emanet_alan").eq("durum", "Emanette").order("id", desc=True).execute()
-    emanetteki_kitaplar = res_emanette.data if res_emanette.data else []
+    try:
+        res_emanette = supabase.table("kitaplar").select("id, ad, yazar, kategori, emanet_alan").eq("durum", "Emanette").order("id", desc=True).execute()
+        emanetteki_kitaplar = res_emanette.data if res_emanette.data else []
+    except Exception:
+        emanetteki_kitaplar = []
 
     with st.expander(f"🔴 Emanetteki Kitaplar ({len(emanetteki_kitaplar)})", expanded=False):
         if emanetteki_kitaplar:
@@ -353,12 +321,14 @@ with tab_emanet:
 
     islem_tipi = st.radio("Yapmak İstediğiniz İşlem:", ["Emanet Ver", "Emanetten Geri Al"], horizontal=True, key=f"radio_islem_{ek_key}")
 
-    if islem_tipi == "Emanet Ver":
-        res_u = supabase.table("kitaplar").select("id, ad, yazar").eq("durum", "Kütüphanede").order("ad").execute()
-    else:
-        res_u = supabase.table("kitaplar").select("id, ad, emanet_alan").eq("durum", "Emanette").order("ad").execute()
-
-    uygun_kitaplar = res_u.data if res_u.data else []
+    try:
+        if islem_tipi == "Emanet Ver":
+            res_u = supabase.table("kitaplar").select("id, ad, yazar").eq("durum", "Kütüphanede").order("ad").execute()
+        else:
+            res_u = supabase.table("kitaplar").select("id, ad, emanet_alan").eq("durum", "Emanette").order("ad").execute()
+        uygun_kitaplar = res_u.data if res_u.data else []
+    except Exception:
+        uygun_kitaplar = []
 
     options_dict = {}
     default_index = 0
@@ -385,34 +355,43 @@ with tab_emanet:
         else:
             st.info("Şu an emanette kitap bulunmuyor.")
 
-    with st.expander("Manuel Kitap ID Gir"):
-        manual_id_input = st.number_input("Kitap ID:", min_value=1, step=1, key=f"manual_id_{ek_key}")
-        if st.button("Bu ID'yi Kullan", key=f"btn_manual_set_{ek_key}"):
+    # --- QR KAMERA VE MANUEL ID INPUT YÖNETİMİ ---
+    col_id1, col_id2 = st.columns(2)
+    with col_id1:
+        manual_id_input = st.number_input("Manuel Kitap ID Gir:", min_value=1, step=1, key=f"manual_id_{ek_key}")
+        if st.button("Bu ID'yi Seç", key=f"btn_manual_set_{ek_key}", use_container_width=True):
             st.session_state["selected_kitap_id"] = int(manual_id_input)
             st.toast(f"🎯 ID #{manual_id_input} seçildi!")
-
-    if not st.session_state["kamera_acik"]:
-        if st.button("📷 Canlı QR Kamerasını Aç", use_container_width=True, key=f"btn_cam_open_{ek_key}"):
-            st.session_state["kamera_acik"] = True
-            st.rerun()
-    else:
-        if st.button("❌ Kamerayı Kapat", use_container_width=True, key=f"btn_cam_close_{ek_key}"):
-            st.session_state["kamera_acik"] = False
             st.rerun()
 
-        st.caption("📷 Arka kamera ile QR kod taranıyor...")
-
-        scanned_val = components.html(SCANNER_HTML, height=340)
+    with col_id2:
+        st.write("**QR Kod Taraması:**")
+        camera_image = st.camera_input("Kamera ile QR Okutun", key=f"cam_input_{ek_key}")
         
-        if scanned_val is not None:
+        if camera_image is not None:
             try:
-                parsed_id = int(str(scanned_val).strip())
-                st.session_state["selected_kitap_id"] = parsed_id
-                st.session_state["kamera_acik"] = False
-                st.session_state["bildirim"] = ("success", f"🎯 QR Okundu! Seçilen Kitap ID: #{parsed_id}")
-                st.rerun()
-            except ValueError:
-                pass
+                import cv2
+                import numpy as np
+                
+                # Resmi OpenCV formatına çevir ve QR kod ara
+                bytes_data = camera_image.getvalue()
+                cv_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+                detector = cv2.QRCodeDetector()
+                data, bbox, _ = detector.detectAndDecode(cv_img)
+                
+                if data:
+                    digits = ''.join(filter(str.isdigit, data))
+                    if digits:
+                        parsed_id = int(digits)
+                        st.session_state["selected_kitap_id"] = parsed_id
+                        st.toast(f"🎯 QR Kod Okundu! Seçilen ID: #{parsed_id}")
+                        st.rerun()
+                    else:
+                        st.warning("QR Kod okundu ancak geçerli bir sayısal ID bulunamadı.")
+                else:
+                    st.warning("QR Kod algılanamadı. Lütfen kodu net bir şekilde ekrana getirin.")
+            except ImportError:
+                st.info("💡 Otomatik QR görsel analizi için 'opencv-python-headless' paketi gerekiyor.")
 
     st.markdown("---")
     kisi_adi = ""
@@ -426,8 +405,11 @@ with tab_emanet:
             st.session_state["bildirim"] = ("error", "Lütfen işlem yapılacak bir kitap seçin veya ID girin.")
             st.rerun()
         else:
-            res_target = supabase.table("kitaplar").select("id, ad, yazar, durum, emanet_alan").eq("id", target_id).execute()
-            kitap = res_target.data[0] if res_target.data else None
+            try:
+                res_target = supabase.table("kitaplar").select("id, ad, yazar, durum, emanet_alan").eq("id", target_id).execute()
+                kitap = res_target.data[0] if res_target.data else None
+            except Exception as e:
+                kitap = None
 
             if not kitap:
                 st.session_state["bildirim"] = ("error", f"#{target_id} ID'li bir kitap veritabanında bulunamadı.")
