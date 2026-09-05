@@ -272,17 +272,17 @@ with tab_liste:
                     btn_label = "✅ Okundu (Okunmadı Yap)" if is_okundu else "📖 Okunmadı (Okundu Yap)"
                     if st.button(btn_label, key=f"btn_okundu_{k_id}", use_container_width=True):
                         yeni_durum = "Okunmadı" if is_okundu else "Okundu"
-                        supabase.table("kitaplar").update({"okundu_durum": yeni_durum}).eq("id", k_id).execute()
+                        supabase.table("kitaplar").update({"okundu_durum": yeni_durum}).eq("id", int(k_id)).execute()
                         st.session_state["bildirim"] = ("success", f"#{k_id} ID'li kitabın durumu güncellendi.")
                         st.rerun()
 
                     if st.button("🗑️ Kitabı Sil", key=f"btn_sil_{k_id}", use_container_width=True):
-                        supabase.table("kitaplar").delete().eq("id", k_id).execute()
+                        supabase.table("kitaplar").delete().eq("id", int(k_id)).execute()
                         st.session_state["bildirim"] = ("success", f"🗑️ '{k_ad}' kütüphaneden silindi.")
                         st.rerun()
 
                 with col_qr:
-                    qr_data = f"{k_id}"
+                    qr_data = str(k_id)
                     encoded_qr_data = urllib.parse.quote(qr_data)
                     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={encoded_qr_data}"
                     st.image(qr_url, caption=f"ID: #{k_id}", width=150)
@@ -309,7 +309,7 @@ with tab_emanet:
                     st.write(f"**Tür:** {ek_kat}")
                     st.write(f"**Emanet Alan Kişi:** {ek_alan}")
                     if st.button("📥 Kütüphaneye Geri Al", key=f"btn_list_geri_al_{ek_id}", use_container_width=True):
-                        supabase.table("kitaplar").update({"durum": "Kütüphanede", "emanet_alan": ""}).eq("id", ek_id).execute()
+                        supabase.table("kitaplar").update({"durum": "Kütüphanede", "emanet_alan": ""}).eq("id", int(ek_id)).execute()
                         st.session_state["bildirim"] = ("success", f"✅ '{ek_ad}' kütüphaneye geri alındı!")
                         emanet_sifirla()
                         st.rerun()
@@ -335,9 +335,9 @@ with tab_emanet:
 
     if uygun_kitaplar:
         if islem_tipi == "Emanet Ver":
-            options_dict = {f"#{k['id']} - {k['ad']} ({k['yazar']})": k['id'] for k in uygun_kitaplar}
+            options_dict = {f"#{k['id']} - {k['ad']} ({k['yazar']})": int(k['id']) for k in uygun_kitaplar}
         else:
-            options_dict = {f"#{k['id']} - {k['ad']} (Emanette: {k['emanet_alan']})": k['id'] for k in uygun_kitaplar}
+            options_dict = {f"#{k['id']} - {k['ad']} (Emanette: {k['emanet_alan']})": int(k['id']) for k in uygun_kitaplar}
 
         if st.session_state["selected_kitap_id"] is not None:
             for idx, k_id_val in enumerate(options_dict.values()):
@@ -355,7 +355,7 @@ with tab_emanet:
         else:
             st.info("Şu an emanette kitap bulunmuyor.")
 
-    # --- QR KAMERA VE MANUEL ID INPUT YÖNETİMİ ---
+    # --- MANUEL VE GÖRSEL KAMERA İLE KİTAP ID SEÇİMİ ---
     col_id1, col_id2 = st.columns(2)
     with col_id1:
         manual_id_input = st.number_input("Manuel Kitap ID Gir:", min_value=1, step=1, key=f"manual_id_{ek_key}")
@@ -365,33 +365,28 @@ with tab_emanet:
             st.rerun()
 
     with col_id2:
-        st.write("**QR Kod Taraması:**")
         camera_image = st.camera_input("Kamera ile QR Okutun", key=f"cam_input_{ek_key}")
-        
         if camera_image is not None:
             try:
                 import cv2
                 import numpy as np
-                
-                # Resmi OpenCV formatına çevir ve QR kod ara
                 bytes_data = camera_image.getvalue()
                 cv_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
                 detector = cv2.QRCodeDetector()
                 data, bbox, _ = detector.detectAndDecode(cv_img)
-                
                 if data:
                     digits = ''.join(filter(str.isdigit, data))
                     if digits:
                         parsed_id = int(digits)
                         st.session_state["selected_kitap_id"] = parsed_id
-                        st.toast(f"🎯 QR Kod Okundu! Seçilen ID: #{parsed_id}")
+                        st.toast(f"🎯 QR Okundu! Seçilen ID: #{parsed_id}")
                         st.rerun()
                     else:
-                        st.warning("QR Kod okundu ancak geçerli bir sayısal ID bulunamadı.")
+                        st.warning("QR Okundu ancak geçerli bir ID (sayı) bulunamadı.")
                 else:
-                    st.warning("QR Kod algılanamadı. Lütfen kodu net bir şekilde ekrana getirin.")
+                    st.warning("Görselde QR kod algılanamadı.")
             except ImportError:
-                st.info("💡 Otomatik QR görsel analizi için 'opencv-python-headless' paketi gerekiyor.")
+                st.info("💡 Otomatik QR görsel taraması için 'opencv-python-headless' paketi gereklidir.")
 
     st.markdown("---")
     kisi_adi = ""
@@ -406,7 +401,9 @@ with tab_emanet:
             st.rerun()
         else:
             try:
-                res_target = supabase.table("kitaplar").select("id, ad, yazar, durum, emanet_alan").eq("id", target_id).execute()
+                # TAMSAYI DÖNÜŞÜMÜ GARANTİSİ
+                target_id_int = int(target_id)
+                res_target = supabase.table("kitaplar").select("id, ad, yazar, durum, emanet_alan").eq("id", target_id_int).execute()
                 kitap = res_target.data[0] if res_target.data else None
             except Exception as e:
                 kitap = None
@@ -423,7 +420,7 @@ with tab_emanet:
                     elif not kisi_adi.strip():
                         st.warning("Lütfen emanet alacak kişinin adını girin.")
                     else:
-                        supabase.table("kitaplar").update({"durum": "Emanette", "emanet_alan": kisi_adi.strip()}).eq("id", k_id).execute()
+                        supabase.table("kitaplar").update({"durum": "Emanette", "emanet_alan": kisi_adi.strip()}).eq("id", int(k_id)).execute()
                         st.session_state["bildirim"] = ("success", f"✅ '{ad}' kitabı {kisi_adi.strip()} kişisine emanet edildi!")
                         emanet_sifirla()
                         st.rerun()
@@ -432,7 +429,7 @@ with tab_emanet:
                         st.session_state["bildirim"] = ("error", f"ℹ️ '{ad}' kitabı zaten kütüphanede bulunuyor.")
                         st.rerun()
                     else:
-                        supabase.table("kitaplar").update({"durum": "Kütüphanede", "emanet_alan": ""}).eq("id", k_id).execute()
+                        supabase.table("kitaplar").update({"durum": "Kütüphanede", "emanet_alan": ""}).eq("id", int(k_id)).execute()
                         st.session_state["bildirim"] = ("success", f"✅ '{ad}' kitabı kütüphaneye geri alındı!")
                         emanet_sifirla()
                         st.rerun()
